@@ -18,3 +18,8 @@ The server binds to loopback only. **Do not reverse proxy or port-forward** with
 Third-party provider calls do not guarantee fresh bank data. Optional on-demand APIs may incur provider fees; a 30-minute local cooldown is not an enforceable total billing cap across crashes or restarts. Plaid pagination restart is covered by synthetic regression tests, not production certification. The early Plaid adapter and browser flow, including Link update mode, are not end-to-end verified against actual bank accounts or eligible production credentials. OAuth redirects and institution/account eligibility remain unverified for all seven selected providers. Signed-in state is local only, not an integration with GoreeCloud Identity. Formal GoreeShield and Wardveil integration, webhooks, independent penetration testing and production authorization are pending.
 
 See [Private dashboard](docs/PRIVATE_DASHBOARD.md) and [Architecture](docs/ARCHITECTURE.md).
+
+
+### v0.9 authenticated history access
+
+The account overview now minimizes transaction metadata: it returns aggregate counts, while all stored transaction details are requested as bounded 1–100-row pages through the POST-only /api/transactions route under the existing owner session and CSRF header. Text, institution/source and date filters are validated, and URL query strings are refused. Search terms are not persisted separately or placed in browser storage. No external analytics or financial-data transmission was introduced. Synthetic integration and static HTML accessibility checks passed, **not** a complete browser or security assessment. Search counts reflect locally saved transactions only and should not be represented as bank data completeness.
