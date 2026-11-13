@@ -1,25 +1,24 @@
 # GoreeCloud Finances — architecture and trust boundaries
 
-## Implemented: disconnected v0.5.0 prototype
+The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.6.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login and optional Plaid integration.
 
-The application is static HTML, CSS and JavaScript with no third-party runtime libraries. The pure parser and exact-cent aggregation functions live in app/finance.js; app/main.js handles in-memory imported records and safe text-only DOM rendering. app/core.py is a separate Python validation reference. The mesh-reference module is a fail-closed **illustration**, not a real integration.
+- `server/main.mjs`: loopback startup only, Node.js 22+.
+- `server/app.mjs`: same-origin authenticated API, session and CSRF/Origin/Host checks, login rate limits, request size bounds, local static UI, imported statement handling, account cards and refresh-on-open endpoint.
+- `server/vault.mjs`: password-derived scrypt key, AES-256-GCM encrypted state, atomic owner-only persistent vault, no decrypted files.
+- `server/plaid.mjs`: provider-authorized Link token exchange; provider institution verification via official item/institution APIs; account and incremental transaction read; item removal. Paid on-demand balance/transaction refresh only with explicit environment opt-in. Explicit endpoint allowlist contains **no payment or transfer operations**.
+- `web/`: responsive GoreeCloud UI alpha-token-based authenticated dashboard; native form controls, safe text-node rendering, contextual freshness indicators, amount masking, search, local CSV import and connected-account revocation.
+- `app/finance.js`: reused strict normalization, integer-cent parser and occurrence-aware duplicate detection. All CSV imports remain locally encrypted in hosted mode.
 
-Data flow: **user-selected normalized CSV** → strict UTF-8 and CSV validation → in-memory transaction records → client-side filters and summaries → manually clear or refresh. No real-account data, credentials, network connectors or persistent transaction stores are included.
+Seven intended provider categories: Navy Federal Credit Union, Cash App, Varo, Capital One, Marcus by Goldman Sachs, Discover and PayPal. Their live support is **not guaranteed**. Linking is per institution where permitted, and OAuth/consent may need renewal. A fresh sync check is **not** equivalent to a fresh bank-data timestamp. Cached balances and actual upstream update times are clearly distinguished.
 
-The seven disconnected institution *labels* are Navy Federal Credit Union, Cash App, Varo, Capital One, Marcus by Goldman Sachs, Discover and PayPal. OAuth/API/aggregator eligibility has not been verified for any of them.
+### Governance and production boundary
 
-Signed amount conventions: positive means inflow, negative means outflow. Movement is not an account balance, the entire set may be incomplete, and identical rows across statement exports may be ambiguous.
+- **GoreeCloud UI**: subset of central alpha tokens used; full acceptance pending.
+- **GoreeCloud Mesh**: adapter boundary prepared; no verified deployed Mesh service integration.
+- **GoreeCloud Identity**: local owner sign-in implemented; no Identity federation or production auth platform integration.
+- **GoreeShield**: source minimization and local retention implemented in part; centralized consent/retention governance not yet integrated.
+- **Wardveil**: baseline code hardening and tests only; no integrated scanning/incident monitoring or independent audit.
 
-## Proposed future design — not connected or implemented
+Not implemented: multi-user, encrypted backup and password recovery, production-safe remote access, OAuth re-link update mode, provider webhook receiver, full transaction reconciliation, platform-native Android app, commercial availability and provider-specific statement parsing. No live banking accounts were linked or verified for this work. The product is a development preview, not Anchor or production.
 
-- **GoreeCloud Mesh**: institution-specific, provider-authorized adapters permitting reads only after actual capability verification.
-- **GoreeCloud Identity**: authenticated, least-privilege server-side access to any future private instance.
-- **GoreeShield**: consent, collection minimization, retention and revocation.
-- **Wardveil**: cybersecurity controls, credential protection, scanning and response.
-- **GoreeCloud UI**: authoritative visual tokens, accessibility, theme and platform testing.
-
-Read-only restrictions must be enforced in backend code and actual provider scopes, **not merely hidden buttons**. A hypothetical hosted backend and provider credentials must remain private, outside this public prototype, pending review.
-
-## Threat assumptions
-
-A compromised browser, extension, OS or shared computer may reveal imported content. Source CSV files and OS/browser caches can persist independently of this application. Parsing is bounded but has not had a complete independent security audit. Test fixtures contain synthetic examples only. No provider has approved this code as a banking integration.
+See [Local private dashboard](PRIVATE_DASHBOARD.md) and [Security](../SECURITY.md).

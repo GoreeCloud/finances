@@ -14,3 +14,14 @@ node_modules/
 *.p12
 *.pfx
 *.log
+
+# Never commit actual financial records, encrypted vaults, or secrets.
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+.vault/
+vault.json
+vault.json.*.tmp
+financial-data/
+node_modules/

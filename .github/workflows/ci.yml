@@ -13,7 +13,9 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Python unit and static-boundary tests
+      - name: Python CSV contract and offline static security tests
         run: python3 -m unittest discover -s tests -v
-      - name: JavaScript unit and Mesh-denial tests
-        run: node --test tests/*.test.cjs mesh-reference/*.test.mjs
+      - name: JavaScript and local auth/refresh security tests
+        run: node --test tests/*.test.cjs tests/server.test.mjs mesh-reference/*.test.mjs
+      - name: Syntax check hosted client
+        run: node --check web/app.js
