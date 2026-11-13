@@ -5,6 +5,11 @@
   const $ = name => document.getElementById(name);
   const PROVIDERS = ['Navy Federal Credit Union', 'Cash App', 'Varo', 'Capital One', 'Marcus by Goldman Sachs', 'Discover', 'PayPal'];
   let csrf = null, details = null, mask = false, refreshing = false, linkBusy = false;
+  // Search pages are queried inside the authorized local vault, never in URL
+  // query strings or browser storage. Epochs discard obsolete async replies.
+  let searchRows = [], searchTotal = 0, searchHasMore = false, searchNextPage = 0;
+  let searchEpoch = 0, searchInflight = null, searchTimer = null;
+
   const integer = new Intl.NumberFormat('en-US');
   const action = (tag, text, className) => { const element = document.createElement(tag); element.textContent = text; if (className) element.className = className; return element; };
   function alertStatus(message, error = false) { $('messages').textContent = message; $('messages').style.color = error ? 'var(--gc-negative)' : 'var(--gc-text)'; }
@@ -99,20 +104,71 @@
     }
   }
   function renderTransactions() {
-    const needle = $('query').value.trim().toLowerCase();
     const target = $('entries'); target.replaceChildren();
-    const rows = details.transactions.filter(t => (t.description + ' ' + t.institution + ' ' + t.account).toLowerCase().includes(needle)).slice(0, 200);
-    for (const r of rows) {
+    for (const r of searchRows) {
       const tr = document.createElement('tr');
-      for (const text of [r.date, r.description, r.institution + ' · ' + r.account, cents(r.cents), r.source === 'csv' ? 'Imported' : (r.pending ? 'Provider · pending' : 'Provider')]) tr.append(action('td', text));
+      for (const text of [r.date, r.description, r.institution + ' · ' + r.account, cents(r.cents),
+        r.source === 'csv' ? 'Imported' : (r.pending ? 'Provider · pending' : 'Provider')]) tr.append(action('td', text));
       target.append(tr);
     }
-    $('no-entries').hidden = rows.length > 0;
-    if (!rows.length && needle) $('no-entries').textContent = 'No matching transactions.';
-    else if (!rows.length) $('no-entries').textContent = 'No transactions yet. Link an institution or import a statement.';
+    $('no-entries').hidden = searchRows.length > 0 || searchInflight === searchEpoch;
+    $('no-entries').textContent = 'No locally stored transactions match these filters.';
+    $('load-more').hidden = !searchHasMore;
+    $('load-more').disabled = searchInflight === searchEpoch;
   }
   function render() { if (!details) return; accountTotals(); renderProviders(); renderTransactions(); }
-  async function loadDashboard() { details = await api('dashboard'); render(); }
+  function invalidateSearch() {
+    searchEpoch++;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchRows = []; searchTotal = 0; searchHasMore = false; searchNextPage = 0;
+    renderTransactions();
+    return searchEpoch;
+  }
+  async function fetchSearchPage(epoch, page) {
+    if (!details || epoch !== searchEpoch || searchInflight === epoch) return;
+    searchInflight = epoch;
+    $('transaction-status').textContent = 'Searching locally stored history…';
+    renderTransactions();
+    try {
+      const result = await api('transactions', {
+        query: $('query').value, institution: $('tx-institution').value,
+        source: $('tx-source').value, start: $('tx-start').value,
+        end: $('tx-end').value, page, pageSize: 50
+      });
+      if (epoch !== searchEpoch || !details) return; // no stale results after logout/filter changes
+      if (page === 0) searchRows = result.rows;
+      else searchRows.push(...result.rows);
+      searchTotal = result.total;
+      searchHasMore = result.hasMore;
+      searchNextPage = page + 1;
+      $('transaction-status').textContent = searchTotal
+        ? 'Showing ' + integer.format(searchRows.length) + ' of ' + integer.format(searchTotal) +
+          ' matching stored entries (' + integer.format(result.totalStored) + ' stored). Not a live bank feed.'
+        : 'No matching locally stored entries. Bank/provider records may be delayed.';
+    } catch (error) {
+      if (epoch !== searchEpoch || !details) return;
+      $('transaction-status').textContent = 'Search failed: ' + error.message;
+      alertStatus('Could not load stored transactions: ' + error.message, true);
+    } finally {
+      if (searchInflight === epoch) searchInflight = null;
+      if (epoch === searchEpoch && details) renderTransactions();
+    }
+  }
+  async function resetTransactions() {
+    const epoch = invalidateSearch();
+    await fetchSearchPage(epoch, 0);
+  }
+  function scheduleTransactions() {
+    const epoch = invalidateSearch();
+    $('transaction-status').textContent = 'Updating search filters…';
+    searchTimer = setTimeout(() => { searchTimer = null; void fetchSearchPage(epoch, 0); }, 180);
+  }
+  async function loadDashboard() {
+    details = await api('dashboard');
+    accountTotals();
+    renderProviders();
+    await resetTransactions();
+  }
   async function refresh(trigger = 'manual') {
     if (refreshing) return;
     refreshing = true; $('refresh').disabled = true; $('spinner').hidden = false;
@@ -226,14 +282,30 @@
     } finally { button.disabled = false; }
   });
   $('refresh').addEventListener('click', () => refresh('manual'));
-  $('query').addEventListener('input', renderTransactions);
+  $('query').addEventListener('input', scheduleTransactions);
+  for (const id of ['tx-institution', 'tx-source', 'tx-start', 'tx-end']) {
+    $(id).addEventListener('change', scheduleTransactions);
+  }
+  $('load-more').addEventListener('click', () => {
+    if (searchHasMore) void fetchSearchPage(searchEpoch, searchNextPage);
+  });
+  $('clear-tx-filters').addEventListener('click', () => {
+    $('query').value = '';
+    $('tx-institution').value = 'all';
+    $('tx-source').value = 'all';
+    $('tx-start').value = '';
+    $('tx-end').value = '';
+    scheduleTransactions();
+    $('query').focus();
+  });
   $('mask').addEventListener('click', () => { mask = !mask; $('mask').textContent = mask ? 'Show amounts' : 'Hide amounts'; render(); });
   $('logout').addEventListener('click', async () => {
     try { await api('logout'); } catch { /* local state still cleared */ }
-    csrf = null; details = null; $('entries').replaceChildren(); $('institutions').replaceChildren();
+    csrf = null; details = null; invalidateSearch(); $('entries').replaceChildren(); $('institutions').replaceChildren();
     $('auth-form').reset(); authScreen(false); alertStatus('Signed out.');
   });
   const select = $('institution'); for (const p of PROVIDERS) select.append(new Option(p, p));
+  const institutionFilter = $('tx-institution'); for (const p of PROVIDERS) institutionFilter.append(new Option(p, p));
   $('import-form').addEventListener('submit', async event => {
     event.preventDefault(); const file = $('csv').files?.[0]; if (!file) return;
     if (file.size > 2_000_000) { alertStatus('File exceeds 2 MB', true); return; }

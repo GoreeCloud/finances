@@ -1,4 +1,4 @@
-# Private dashboard — v0.8.0-alpha.0
+# Private dashboard — v0.9.0-alpha.0
 
 ## Creating and using your account
 
@@ -67,6 +67,14 @@ GOREE_PLAID_TRANSACTION_REFRESH=true
 ## Offline import fallback
 
 Provide a UTF-8 CSV with the exact normalized header `date,description,amount`. Dates use `YYYY-MM-DD`, dollar amounts have at most two fractional digits, positive = inflow and negative = outflow. Never use actual account numbers for user-defined nicknames. Imports are parsed on the loopback server, converted to integer cents and encrypted at rest. They do not represent verified official balances.
+
+## Stored-transaction search and pagination
+
+The signed-in dashboard now shows a **Stored transactions** section. Type a merchant, description or account term, select an institution, choose a source (imported CSV or connected provider), or set inclusive date boundaries. Filters combine. Choose **Clear filters** to return to the full locally stored record set. Use **Show 50 more** to progressively load matching rows rather than downloading the entire vault history into the browser.
+
+Only records already present in your local encrypted vault are searched. The authenticated, CSRF-guarded, POST-only API route /api/transactions accepts query, institution, source, start, end, page and pageSize (1–100), returns rows, total, totalStored, page, pageSize and hasMore, and rejects invalid filters. A first-page query defaults to 50 rows. The overview no longer sends a 200-transaction preview; it returns only account summaries and counts. Your search terms are in the request body, **not URL parameters** or browser storage. HTTP responses set Cache-Control: no-store.
+
+The total reflects locally stored entries, not complete bank history. Plaid may still deliver delayed/cached updates, each connection is capped at 10,000 transaction records in this development alpha, and cross-source CSV/provider overlap is not fully reconciled. Search pagination is per-request, not a transactional immutable snapshot: if a refresh changes history while you are browsing later pages, repeat the search to get a fresh result. No full historical export, cloud sync or production guarantee is provided.
 
 ## Statement duplication semantics
 

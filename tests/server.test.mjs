@@ -282,7 +282,7 @@ test('overlapping CSV reimport persists additional identical occurrences without
   let dash = (await h.send('dashboard')).value;
   assert.equal(dash.totalTransactions, 3);
   assert.equal(dash.providers.find(x => x.name === 'Cash App').importedRows, 3);
-  assert.equal(dash.transactions.filter(x => x.description === 'Repeated charge').length, 3);
+  assert.equal((await h.send('transactions', { query: 'Repeated charge' })).value.rows.length, 3);
   // Replay across a fresh process session validates persisted, encrypted storage.
   await h.send('logout');
   await h.send('login', { username: 'owner_1', password: PASS });
@@ -408,4 +408,91 @@ test('provider data caps fail closed instead of silently claiming complete histo
     iso_currency_code: 'USD', amount: 1.25, name: 'Extra synthetic transaction' };
   assert.throws(() => applySync(tenThousand, [{ added: [newTx], modified: [], removed: [] }]), /transaction limit exceeded/);
   assert.equal(tenThousand.length, 10000);
+});
+
+test('stored-history pagination reaches older matches beyond the dashboard 200-row preview', async t => {
+  const h = await setup(); t.after(() => h.close());
+  await h.send('setup', { username: 'owner_1', password: PASS });
+  const rows = Array.from({ length: 235 }, (_, i) => {
+    const date = i === 0 ? '2026-01-01' : '2026-11-01';
+    const desc = i === 0 ? 'OnlyMatchHiddenBeyond200' : 'SyntheticRecord' + i;
+    return date + ',' + desc + ',-1.01';
+  });
+  const result = await h.send('import', {
+    institution: 'PayPal', label: 'Wallet', csv: 'date,description,amount\n' + rows.join('\n') + '\n'
+  });
+  assert.equal(result.code, 200);
+  assert.equal(result.value.added, 235);
+  // No unsolicited 200-row preview or transaction payload on overview.
+  assert.equal(Object.hasOwn((await h.send('dashboard')).value, 'transactions'), false);
+  const zero = await h.send('transactions', { page: 0, pageSize: 50 });
+  assert.equal(zero.code, 200);
+  assert.deepEqual([zero.value.total, zero.value.totalStored, zero.value.rows.length, zero.value.hasMore], [235, 235, 50, true]);
+  const gathered = [...zero.value.rows.map(r => r.description)];
+  for (let page = 1; page < 5; page++) {
+    const part = await h.send('transactions', { page, pageSize: 50 });
+    gathered.push(...part.value.rows.map(r => r.description));
+    assert.equal(part.value.page, page);
+    if (page === 4) assert.deepEqual([part.value.rows.length, part.value.hasMore], [35, false]);
+  }
+  assert.equal(new Set(gathered).size, 235);
+  assert.ok(gathered.includes('OnlyMatchHiddenBeyond200'));
+  const searched = await h.send('transactions', { query: 'onlymatchhiddenbeyond200' });
+  assert.equal(searched.value.total, 1);
+  assert.equal(searched.value.rows[0].description, 'OnlyMatchHiddenBeyond200');
+  const older = await h.send('transactions', { start: '2026-01-01', end: '2026-02-01' });
+  assert.equal(older.value.total, 1);
+  const pastEnd = await h.send('transactions', { page: 999, pageSize: 50 });
+  assert.deepEqual([pastEnd.value.rows.length, pastEnd.value.total, pastEnd.value.hasMore], [0, 235, false]);
+});
+
+test('stored-history filters separate institution and CSV/provider source, preserving exact cents', async t => {
+  const plaid = { enabled: true, paidBalance: false, paidTxRefresh: false,
+    async exchange() { return { itemId: 'fake-i', accessToken: 'SECRET_NOT_FOR_BROWSER' }; },
+    async institution() { return { id: 'ins', name: 'PayPal' }; },
+    async sync(item) { return { ...item, accounts: [{ id: 'a', name: 'Balance' }], transactions: [
+      { id: 'fake-transaction', accountId: 'a', date: '2026-11-09',
+        description: 'Provider dinner', cents: '-1234', pending: false }
+    ], lastChecked: '2026-11-10T00:00:00Z', lastError: null }; },
+    async remove() {}
+  };
+  const h = await setup(plaid); t.after(() => h.close());
+  await h.send('setup', { username: 'owner_1', password: PASS });
+  await h.send('import', { institution: 'Cash App', label: 'Wallet', csv: CSV });
+  await h.send('connect', { institution: 'PayPal', publicToken: 'FAKE_PUBLIC' });
+  const all = await h.send('transactions');
+  assert.equal(all.value.total, 3);
+  assert.equal(JSON.stringify(all.value).includes('SECRET_NOT_FOR_BROWSER'), false);
+  const provider = await h.send('transactions', { source: 'plaid', institution: 'PayPal' });
+  assert.equal(provider.value.total, 1);
+  assert.equal(provider.value.rows[0].cents, '-1234');
+  assert.equal(provider.value.rows[0].source, 'plaid');
+  assert.equal((await h.send('transactions', { source: 'csv', institution: 'PayPal' })).value.total, 0);
+  assert.equal((await h.send('transactions', { source: 'csv', institution: 'Cash App' })).value.total, 2);
+  assert.equal((await h.send('transactions', { query: 'wallet' })).value.total, 2);
+  assert.equal((await h.send('transactions', { query: 'DinNer' })).value.total, 1);
+  assert.equal((await h.send('transactions', { start: '2026-11-09', end: '2026-11-09' })).value.total, 1);
+  assert.equal((await h.send('transactions', { start: '2026-11-10' })).value.total, 0);
+});
+
+test('stored-history API requires a session and CSRF, refuses unsafe filters and URL search', async t => {
+  const h = await setup(); t.after(() => h.close());
+  assert.equal((await h.send('transactions')).code, 401);
+  await h.send('setup', { username: 'owner_1', password: PASS });
+  const csrf = h.csrf; h.setCsrf('bad');
+  assert.equal((await h.send('transactions')).code, 403);
+  h.setCsrf(csrf);
+  for (const payload of [
+    { page: -1 }, { page: 0.5 }, { page: 100001 }, { pageSize: 0 },
+    { pageSize: 101 }, { page: '0' }, { query: 'x'.repeat(161) },
+    { source: 'payments' }, { institution: 'Unknown Bank' },
+    { start: '2026-02-29' }, { end: '2026-13-01' },
+    { start: '2026-11-11', end: '2026-11-10' }, { source: null }
+  ]) assert.equal((await h.send('transactions', payload)).code, 400, JSON.stringify(payload));
+  const queryResponse = await fetch(h.base + '/api/transactions?query=private', {
+    method: 'POST', headers: { 'x-gc-request': 'finances', 'x-gc-csrf': csrf,
+      'content-type': 'application/json', cookie: h.cookie }, body: '{}'
+  });
+  assert.equal(queryResponse.status, 400);
+  assert.equal((await h.send('transactions', { page: 0, pageSize: 50 })).code, 200);
 });

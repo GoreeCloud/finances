@@ -44,8 +44,21 @@
     </section>
     <div class="section-title"><div><p class="overline">YOUR NETWORK</p><h2>Accounts & institutions</h2></div><span class="muted micro" id="provider-mode"></span></div>
     <section class="institution-grid" id="institutions" aria-label="Seven financial institutions"></section>
-    <div class="section-title"><div><p class="overline">YOUR ACTIVITY</p><h2>Recent transactions</h2></div><label class="search-label" for="query">Find an entry <input type="search" id="query" placeholder="Search transactions"></label></div>
-    <section class="glass table-wrap"><div class="scroll"><table><thead><tr><th>Date</th><th>Description</th><th>Institution / account</th><th>Amount</th><th>Source</th></tr></thead><tbody id="entries"></tbody></table></div><p class="muted empty-note" id="no-entries">No transactions yet. Link an institution or import a statement.</p></section>
+    <div class="section-title"><div><p class="overline">YOUR ACTIVITY</p><h2>Stored transactions</h2></div><span class="muted micro">Read-only · data may be delayed or duplicated across sources</span></div>
+    <section class="glass transaction-panel" aria-labelledby="transactions-filter-heading">
+      <h3 id="transactions-filter-heading" class="filter-heading">Search your entire stored history</h3>
+      <div class="transaction-filters">
+        <label for="query">Search <input type="search" id="query" maxlength="160" placeholder="Merchant, account, description" autocomplete="off"></label>
+        <label for="tx-institution">Institution <select id="tx-institution"><option value="all">All institutions</option></select></label>
+        <label for="tx-source">Source <select id="tx-source"><option value="all">All sources</option><option value="csv">Imported statements</option><option value="plaid">Connected provider</option></select></label>
+        <label for="tx-start">From date <input type="date" id="tx-start"></label>
+        <label for="tx-end">Through date <input type="date" id="tx-end"></label>
+      </div>
+      <div class="transaction-filter-actions"><button type="button" class="smallbtn" id="clear-tx-filters">Clear filters</button><p class="micro muted" id="transaction-status" role="status" aria-live="polite">Loading locally stored transactions…</p></div>
+      <div class="scroll"><table><thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Institution / account</th><th scope="col">Amount</th><th scope="col">Source</th></tr></thead><tbody id="entries"></tbody></table></div>
+      <p class="muted empty-note" id="no-entries">No stored transactions match these filters.</p>
+      <div class="transaction-pager"><button type="button" id="load-more" class="quiet" hidden>Show 50 more</button></div>
+    </section>
     <section class="glass import-panel">
       <div><p class="overline">OFFLINE FALLBACK</p><h2>Import a statement</h2><p class="muted">For institutions without compatible linking, select a normalized CSV. Rows are encrypted locally after import.</p></div>
       <form id="import-form"><label for="institution">Institution</label><select id="institution" required></select><label for="label">Account nickname (not an account number)</label><input id="label" maxlength="64" value="Primary" required><label for="csv">CSV file · date,description,amount</label><input id="csv" type="file" accept=".csv,text/csv" required><button type="submit" class="primary">Import securely</button></form>

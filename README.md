@@ -1,6 +1,6 @@
 # GoreeCloud Finances — read-only personal financial dashboard
 
-**Maturity:** v0.8.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
+**Maturity:** v0.9.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
 
 ## Private owner dashboard (new)
 
@@ -14,6 +14,14 @@ npm start
 On first launch, **create your own username and password** for the GoreeCloud Finances app. The password encrypts the local vault; it is **not** a bank login. Sign in to see all seven institution cards and any account data you've linked or imported. Every app opening initiates a refresh check of existing connected providers; the UI reports the check time and how recently the upstream source says its data was updated.
 
 **Live banking connections are not enabled by default.** A read-only Plaid Link adapter is available only when you supply your own authorized Plaid credentials and confirm the required product access, provider coverage, terms and costs. One-time institution authorization is attempted **per provider** where supported; not all providers or account types are guaranteed compatible. No banking password is stored by the app. Connections can be revoked from the dashboard. The hosted local mode stores imported CSV and provider tokens **encrypted at rest**.
+
+### v0.9.0 alpha — private complete stored-history browsing
+
+- **Server-side stored-history search:** search all transactions currently preserved inside your local encrypted vault rather than only the old 200-row dashboard preview. Search accepts institution, CSV/provider source, text and inclusive start/end dates.
+- **Progressive 50-row pages:** the browser displays the first 50 matching records and a Show 50 more button. An account balance or refreshed bank feed is **not** implied by the number of locally stored transactions.
+- **Clear filters and accessible controls:** all filters have labels and keyboard support; results show a live status count, an empty state and a visible distinction between imported and connected-provider records. Old async search results are discarded if your filters change or you sign out.
+- **Data minimization:** the dashboard overview returns only aggregate counts and account summaries; transaction descriptions are fetched from the authenticated, CSRF-protected search endpoint on demand, with no search terms placed in URLs or browser storage.
+- **Bounded validation:** reject impossible dates, invalid institution/source, abusive page numbers and oversized query terms. The API returns at most 100 records per request and is covered by synthetic integration tests.
 
 ### v0.8.0 alpha — data accuracy and one-time linking maintenance
 

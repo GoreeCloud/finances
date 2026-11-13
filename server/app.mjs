@@ -33,15 +33,8 @@ async function body(req) {
   try { const value = JSON.parse(Buffer.concat(parts).toString('utf8')); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(); return value; }
   catch { throw Object.assign(new Error('Invalid JSON object'), { status: 400 }); }
 }
-function jsonDashboard(state, options) {
-  const institutions = PROVIDERS.map(name => {
-    const items = state.items.filter(x => x.institution === name);
-    const imports = state.imports.filter(x => x.institution === name);
-    return { name, connected: items.length > 0, accounts: items.flatMap(x => (x.accounts || []).map(a => ({ ...a, itemId: x.id, institution: name, checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null, balanceSource: x.balanceSource || 'cached' }))),
-      links: items.map(x => ({ id: x.id, status: x.lastError ? 'error' : (x.lastChecked ? 'checked' : 'pending'), error: x.lastError || null,
-        checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null, balanceSource: x.balanceSource || 'cached' })),
-      importedRows: imports.reduce((sum, x) => sum + x.rows.length, 0) };
-  });
+// Returns only locally stored rows. Does not contact a bank or imply freshness.
+function transactionRows(state) {
   const transactions = [];
   for (const imported of state.imports) {
     for (const t of imported.rows) transactions.push({ source: 'csv', institution: imported.institution, account: imported.label,
@@ -53,7 +46,56 @@ function jsonDashboard(state, options) {
       account: names.get(t.accountId) || 'Account', date: t.date, description: t.description, cents: mask(t.cents), pending: t.pending });
   }
   transactions.sort((a, b) => b.date.localeCompare(a.date));
-  return { providers: institutions, transactions: transactions.slice(0, 200), totalTransactions: transactions.length,
+  return transactions;
+}
+function listTransactions(state, input) {
+  const bad = () => { throw Object.assign(new Error('Invalid transaction search filters'), { status: 400 }); };
+  const query = input.query === undefined ? '' : input.query;
+  const institution = input.institution === undefined ? 'all' : input.institution;
+  const source = input.source === undefined ? 'all' : input.source;
+  const start = input.start === undefined ? '' : input.start;
+  const end = input.end === undefined ? '' : input.end;
+  const page = input.page === undefined ? 0 : input.page;
+  const pageSize = input.pageSize === undefined ? 50 : input.pageSize;
+  if (typeof query !== 'string' || query.length > 160 ||
+    (institution !== 'all' && !PROVIDERS.includes(institution)) ||
+    !['all', 'csv', 'plaid'].includes(source) ||
+    typeof start !== 'string' || typeof end !== 'string' ||
+    (start && !finance.isValidDate(start)) || (end && !finance.isValidDate(end)) ||
+    (start && end && start > end) ||
+    !Number.isSafeInteger(page) || page < 0 || page > 100000 ||
+    !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) bad();
+  const needle = query.trim().toLocaleLowerCase('en-US');
+  const allRows = transactionRows(state);
+  const filtered = allRows.filter(row =>
+    (institution === 'all' || row.institution === institution) &&
+    (source === 'all' || row.source === source) &&
+    (!start || row.date >= start) && (!end || row.date <= end) &&
+    (!needle || (row.description + ' ' + row.institution + ' ' + row.account).toLocaleLowerCase('en-US').includes(needle)));
+  const offset = page * pageSize;
+  return {
+    rows: filtered.slice(offset, offset + pageSize),
+    total: filtered.length,
+    totalStored: allRows.length,
+    page, pageSize,
+    hasMore: offset + pageSize < filtered.length,
+    note: 'Search covers locally stored records only. Imported and provider rows may overlap; bank data may be delayed.'
+  };
+}
+function jsonDashboard(state, options) {
+  const institutions = PROVIDERS.map(name => {
+    const items = state.items.filter(x => x.institution === name);
+    const imports = state.imports.filter(x => x.institution === name);
+    return { name, connected: items.length > 0, accounts: items.flatMap(x => (x.accounts || []).map(a => ({ ...a, itemId: x.id, institution: name, checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null, balanceSource: x.balanceSource || 'cached' }))),
+      links: items.map(x => ({ id: x.id, status: x.lastError ? 'error' : (x.lastChecked ? 'checked' : 'pending'), error: x.lastError || null,
+        checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null, balanceSource: x.balanceSource || 'cached' })),
+      importedRows: imports.reduce((sum, x) => sum + x.rows.length, 0) };
+  });
+  // Data minimization: the overview carries counts and account summaries, not
+  // an unsolicited transaction dump. The owner requests pages explicitly.
+  const totalTransactions = state.imports.reduce((n, x) => n + x.rows.length, 0) +
+    state.items.reduce((n, x) => n + (x.transactions || []).length, 0);
+  return { providers: institutions, totalTransactions,
     linkedItems: state.items.length, importBatches: state.imports.length, plaidEnabled: options.plaid.enabled,
     paidBalance: options.plaid.paidBalance, paidTxRefresh: options.plaid.paidTxRefresh,
     info: 'Cached balances and transaction updates depend on the institution/provider; a new sync check is not a guarantee of new bank data.' };
@@ -164,6 +206,7 @@ export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePla
         }));
       }
       if (url.pathname === '/api/dashboard') return json(res, 200, jsonDashboard(await load(session), { plaid }));
+      if (url.pathname === '/api/transactions') return json(res, 200, listTransactions(await load(session), input));
       if (url.pathname === '/api/import') return json(res, 200, await exclusive(async () => {
         if (typeof input.csv !== 'string' || input.csv.length > 2_000_000 || !PROVIDERS.includes(input.institution)) throw Object.assign(new Error('Invalid statement'), { status: 400 });
         let rows;
