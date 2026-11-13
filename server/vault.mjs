@@ -81,14 +81,46 @@ export function makeVault(path) {
     if (!Buffer.isBuffer(key) || key.length !== 32) throw new Error('Invalid unlock key');
     return decrypt(key, await getEnvelope());
   }
-  async function save(key, value) {
-    const existing = await getEnvelope();
-    const encoded = Buffer.from(JSON.stringify(encrypt(key, value, Buffer.from(existing.salt, 'base64'), existing.username)));
+  async function atomicSave(envelope) {
+    const encoded = Buffer.from(JSON.stringify(envelope));
     if (encoded.length > 12_000_000) throw new Error('Vault capacity exceeded');
     const temp = file + '.' + randomBytes(12).toString('hex') + '.tmp';
     const fd = await open(temp, 'wx', 0o600);
-    try { await fd.writeFile(encoded); await fd.sync(); await fd.close(); await rename(temp, file); }
-    catch (error) { await fd.close().catch(() => {}); await unlink(temp).catch(() => {}); throw error; }
+    try {
+      await fd.writeFile(encoded);
+      await fd.sync();
+      await fd.close();
+      await rename(temp, file);
+    } catch (error) {
+      await fd.close().catch(() => {});
+      await unlink(temp).catch(() => {});
+      throw error;
+    }
   }
-  return { file, exists, setup, unlock, readWithKey, save };
+  async function save(key, value) {
+    const existing = await getEnvelope();
+    // A stale key must never overwrite the vault after credential rotation.
+    decrypt(key, existing);
+    await atomicSave(encrypt(key, value, Buffer.from(existing.salt, 'base64'), existing.username));
+  }
+  async function rotate(key, currentPassword, nextPassword) {
+    if (!validPassword(nextPassword) || nextPassword === currentPassword) {
+      throw Object.assign(new Error('Choose a different password of 12–256 characters'), { status: 400 });
+    }
+    if (!validPassword(currentPassword)) throw Object.assign(new Error('Invalid current password'), { status: 401 });
+    const existing = await getEnvelope();
+    const oldKey = await derive(currentPassword, Buffer.from(existing.salt, 'base64'));
+    const verified = Buffer.isBuffer(key) && key.length === 32 && timingSafeEqual(oldKey, key);
+    oldKey.fill(0);
+    if (!verified) throw Object.assign(new Error('Invalid current password'), { status: 401 });
+    // Decrypt before writing to guarantee state preservation or fail unchanged.
+    const state = decrypt(key, existing);
+    const nextSalt = randomBytes(24);
+    const nextKey = await derive(nextPassword, nextSalt);
+    try {
+      await atomicSave(encrypt(nextKey, state, nextSalt, existing.username));
+      return { key: nextKey, username: existing.username };
+    } catch (error) { nextKey.fill(0); throw error; }
+  }
+  return { file, exists, setup, unlock, readWithKey, save, rotate };
 }

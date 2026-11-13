@@ -50,6 +50,20 @@
       <div><p class="overline">OFFLINE FALLBACK</p><h2>Import a statement</h2><p class="muted">For institutions without compatible linking, select a normalized CSV. Rows are encrypted locally after import.</p></div>
       <form id="import-form"><label for="institution">Institution</label><select id="institution" required></select><label for="label">Account nickname (not an account number)</label><input id="label" maxlength="64" value="Primary" required><label for="csv">CSV file · date,description,amount</label><input id="csv" type="file" accept=".csv,text/csv" required><button type="submit" class="primary">Import securely</button></form>
     </section>
+    <section class="glass security-panel" aria-labelledby="security-heading">
+      <div><p class="overline">OWNER SECURITY</p><h2 id="security-heading">Change your vault password</h2>
+        <p class="muted">Re-encrypt your private data with a new password. You'll stay signed in on this device; all other sessions are revoked. Keep the new password safe—there is no password recovery yet.</p></div>
+      <form id="password-change-form" autocomplete="on">
+        <label for="current-password">Current GoreeCloud password</label>
+        <input id="current-password" name="current-password" type="password" autocomplete="current-password" minlength="12" maxlength="256" required>
+        <label for="new-password">New password (12–256 characters)</label>
+        <input id="new-password" name="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>
+        <label for="confirm-password">Confirm new password</label>
+        <input id="confirm-password" name="confirm-password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>
+        <button type="submit" class="primary">Change password</button>
+        <p id="password-change-status" role="status" aria-live="polite" class="muted micro"></p>
+      </form>
+    </section>
     <footer><strong>GoreeCloud Finances</strong> · Local development preview. Provider availability is not guaranteed. A successful check does not mean a bank has supplied new data. Never enter bank passwords into GoreeCloud Finances.</footer>
   </div>
 </main>

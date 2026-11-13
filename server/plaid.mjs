@@ -63,6 +63,17 @@ export function makePlaid(env = process.env, request = fetch) {
   const enabled = Boolean(env.GOREE_PLAID_CLIENT_ID && env.GOREE_PLAID_SECRET && HOSTS[environment]);
   const paidBalance = enabled && env.GOREE_PLAID_REALTIME_BALANCE === 'true';
   const paidTxRefresh = enabled && env.GOREE_PLAID_TRANSACTION_REFRESH === 'true';
+  // Repeated page opens must never trigger a new billable request every time.
+  const PAID_COOLDOWN_MS = 30 * 60 * 1000;
+  const lastPaidAttempts = new Map();
+  function takePaidAllowance(item, operation, previousTime) {
+    const cacheKey = item.id + '|' + operation;
+    const previous = Math.max(lastPaidAttempts.get(cacheKey) || 0, Date.parse(previousTime || '') || 0);
+    const now = Date.now();
+    if (now - previous < PAID_COOLDOWN_MS) return null;
+    lastPaidAttempts.set(cacheKey, now); // Recorded before the call even if it fails.
+    return new Date(now).toISOString();
+  }
   async function call(path, input = {}) {
     if (!enabled) throw new Error('Plaid is not configured');
     if (!ALLOWED.has(path)) throw new Error('Forbidden provider operation');
@@ -106,28 +117,60 @@ export function makePlaid(env = process.env, request = fetch) {
   }
   async function sync(item) {
     const target = { ...item };
-    if (paidTxRefresh) await call('/transactions/refresh', { access_token: target.accessToken });
+    // Optional paid calls use a 30-minute local cooldown; ordinary reads happen
+    // on every open. Freshness is the provider's timestamp, not the request time.
+    if (paidTxRefresh) {
+      const stamp = takePaidAllowance(item, 'transactions', item.lastPaidTxRefreshAt);
+      if (stamp) {
+        target.lastPaidTxRefreshAt = stamp;
+        await call('/transactions/refresh', { access_token: target.accessToken });
+      }
+    }
+    const balanceStamp = paidBalance ? takePaidAllowance(item, 'balance', item.lastPaidBalanceAt) : null;
     const [accounts, details] = await Promise.all([
-      call(paidBalance ? '/accounts/balance/get' : '/accounts/get', { access_token: target.accessToken }),
+      call(balanceStamp ? '/accounts/balance/get' : '/accounts/get', { access_token: target.accessToken }),
       call('/item/get', { access_token: target.accessToken })
     ]);
-    let cursor = target.cursor || undefined;
-    let pages = [], finished = false;
-    for (let index = 0; index < 40; index++) {
-      const body = await call('/transactions/sync', { access_token: target.accessToken, ...(cursor ? { cursor } : {}), count: 100 });
-      pages.push(body);
-      cursor = body.next_cursor;
-      if (!body.has_more) { finished = true; break; }
-      if (!cursor) throw new Error('Provider pagination cursor missing');
+    if (balanceStamp) target.lastPaidBalanceAt = balanceStamp;
+
+    // Plaid can mutate the feed during pagination. On the special mutation error
+    // all pages must be discarded and the entire loop restarted from the original
+    // cursor. Never persist partial pages, and cap retries to avoid endless loops.
+    const originalCursor = target.cursor || undefined;
+    let pages, cursor, finished;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      pages = [];
+      cursor = originalCursor;
+      finished = false;
+      try {
+        for (let index = 0; index < 40; index++) {
+          const page = await call('/transactions/sync', {
+            access_token: target.accessToken, ...(cursor ? { cursor } : {}), count: 500
+          });
+          if (typeof page.next_cursor !== 'string' || !page.next_cursor ||
+              typeof page.has_more !== 'boolean' || !Array.isArray(page.added) ||
+              !Array.isArray(page.modified) || !Array.isArray(page.removed)) {
+            throw new Error('Invalid provider transaction page');
+          }
+          if (page.has_more && page.next_cursor === cursor) throw new Error('Provider cursor made no progress');
+          pages.push(page);
+          cursor = page.next_cursor;
+          if (!page.has_more) { finished = true; break; }
+        }
+        if (!finished) throw new Error('Provider pagination exceeded safe limit');
+        break;
+      } catch (error) {
+        if (error.code === 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' && attempt < 2) continue;
+        throw error;
+      }
     }
-    if (!finished) throw new Error('Provider pagination exceeded safe limit');
     target.accounts = cleanAccounts(accounts.accounts);
     target.transactions = applySync(item.transactions || [], pages);
     target.cursor = cursor;
     target.lastChecked = new Date().toISOString();
     target.lastProviderUpdate = details.item?.status?.transactions?.last_successful_update || null;
     target.lastError = null;
-    target.balanceSource = paidBalance ? 'on-demand' : 'cached';
+    target.balanceSource = balanceStamp ? 'on-demand' : 'cached';
     return target;
   }
   return { enabled, environment, paidBalance, paidTxRefresh, createLinkToken, exchange, institution, remove, sync, call };

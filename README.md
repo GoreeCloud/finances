@@ -1,6 +1,6 @@
 # GoreeCloud Finances — read-only personal financial dashboard
 
-**Maturity:** v0.6.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
+**Maturity:** v0.7.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
 
 ## Private owner dashboard (new)
 
@@ -15,7 +15,15 @@ On first launch, **create your own username and password** for the GoreeCloud Fi
 
 **Live banking connections are not enabled by default.** A read-only Plaid Link adapter is available only when you supply your own authorized Plaid credentials and confirm the required product access, provider coverage, terms and costs. One-time institution authorization is attempted **per provider** where supported; not all providers or account types are guaranteed compatible. No banking password is stored by the app. Connections can be revoked from the dashboard. The hosted local mode stores imported CSV and provider tokens **encrypted at rest**.
 
-See [setup, configuration, security and refresh behavior](docs/PRIVATE_DASHBOARD.md) and [Security policy](SECURITY.md).
+### New: safer recovery and synchronization (v0.7.0 alpha)
+
+- **Change your vault password** in the signed-in dashboard. Existing encrypted state is atomically re-encrypted using a new salt, and prior sessions are revoked. There is still **no forgotten-password recovery**.
+- **Local encrypted backup:** run npm run vault:backup to make a sealed copy in the private backups directory (outside the repository by default).
+- **Non-overwriting restore:** stop the server, ensure the target vault does not exist, then run npm run vault:restore -- /absolute/path/to/backup.encrypted.json; sign in using the password from when the backup was created.
+- **Plaid reliability:** retries transaction pagination mutations starting at the original cursor, without persisting incomplete pages. Optional paid requests have a 30-minute local cooldown per item and operation, while routine provider checks remain enabled.
+- No new accounts are connected by these development improvements.
+
+See [setup, configuration, security and refresh behavior](docs/PRIVATE_DASHBOARD.md), [Security policy](SECURITY.md), and [Upstream review](docs/UPSTREAM_REVIEW.md).
 
 ## Earlier completely offline viewer
 

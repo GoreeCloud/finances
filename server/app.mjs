@@ -133,6 +133,7 @@ export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePla
         return json(res, 201, newSession(result, res));
       }
       if (url.pathname === '/api/login') {
+        return exclusive(async () => {
         const record = fails.get('login') || { count: 0, until: 0 };
         if (record.until > Date.now()) return fail(res, 429, 'Too many attempts; try again later');
         if (!validUsername(input.username) || typeof input.password !== 'string' || input.password.length > 256) return fail(res, 401, 'Invalid username or password');
@@ -146,9 +147,22 @@ export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePla
           fails.set('login', record);
           return fail(res, 401, 'Invalid username or password');
         }
+        });
       }
       if (!session) return fail(res, 401, 'Sign in required');
       if (url.pathname === '/api/logout') { dropSession(session.id, res); return json(res, 200, { authenticated: false }); }
+      if (url.pathname === '/api/password/change') {
+        if (!validPassword(input.currentPassword) || !validPassword(input.newPassword)) {
+          return fail(res, 400, 'Both passwords must be 12–256 characters and valid');
+        }
+        return json(res, 200, await exclusive(async () => {
+          // Re-authenticate with the current password. Serialize with writes and logins.
+          const rotated = await vault.rotate(session.key, input.currentPassword, input.newPassword);
+          for (const existing of sessions.values()) existing.key.fill(0);
+          sessions.clear();
+          return { ...newSession(rotated, res), otherSessionsRevoked: true };
+        }));
+      }
       if (url.pathname === '/api/dashboard') return json(res, 200, jsonDashboard(await load(session), { plaid }));
       if (url.pathname === '/api/import') return json(res, 200, await exclusive(async () => {
         if (typeof input.csv !== 'string' || input.csv.length > 2_000_000 || !PROVIDERS.includes(input.institution)) throw Object.assign(new Error('Invalid statement'), { status: 400 });

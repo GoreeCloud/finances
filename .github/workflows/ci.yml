@@ -17,5 +17,10 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: JavaScript and local auth/refresh security tests
         run: node --test tests/*.test.cjs tests/server.test.mjs mesh-reference/*.test.mjs
-      - name: Syntax check hosted client
-        run: node --check web/app.js
+      - name: Syntax check local app and ciphertext-backup CLI
+        run: |
+          node --check web/app.js
+          node --check server/app.mjs
+          node --check server/vault.mjs
+          node --check server/plaid.mjs
+          node --check cli/vault-backup.mjs
