@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-gc-theme="dark" data-gc-accent="lagoon">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>GoreeCloud Finances · Your accounts, one place</title>
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body class="gc-app">
+<a href="#main" class="skip">Skip to main content</a>
+<div class="page" id="main">
+<header class="topbar">
+  <div class="brand"><div class="mark" aria-hidden="true">◎</div><div><span class="kicker">GOREECLOUD</span><strong>Finances</strong></div></div>
+  <div class="bar-actions"><span class="privacy-pill">PRIVATE · READ ONLY</span><button id="logout" class="quiet" hidden>Sign out</button></div>
+</header>
+<main>
+  <section id="auth" class="auth-card glass" hidden>
+    <div class="auth-art" aria-hidden="true"><span>◎</span></div>
+    <p class="overline" id="auth-eyebrow">OWNER ACCESS</p>
+    <h1 id="auth-heading">Welcome back.</h1>
+    <p class="muted" id="auth-copy">Sign in to your encrypted local dashboard.</p>
+    <form id="auth-form" autocomplete="on">
+      <label for="username">Your GoreeCloud username</label><input id="username" name="username" required autocomplete="username" minlength="3" maxlength="32" spellcheck="false" placeholder="yourname">
+      <label for="password">Password</label><input id="password" type="password" name="password" required autocomplete="current-password" minlength="12" maxlength="256" placeholder="At least 12 characters">
+      <button id="auth-submit" type="submit" class="primary">Sign in securely</button>
+    </form>
+    <p class="footnote" id="auth-note">This password unlocks this app only. Never enter your banking password here.</p>
+  </section>
+  <div id="dashboard" hidden>
+    <section class="hero">
+      <div><div class="overline">YOUR PRIVATE FINANCIAL OVERVIEW</div><h1>Every account. <span>One clear view.</span></h1>
+        <p class="muted">Connect supported institutions once, or securely import statements. Your linked data stays in a local encrypted vault.</p></div>
+      <div class="hero-acts"><button id="mask" class="quiet">Hide amounts</button><button id="refresh" class="primary"><span class="spin" id="spinner" hidden></span> Check for updates</button></div>
+    </section>
+    <section class="status-banner" aria-live="polite" id="status-line">Checking connection status…</section>
+    <section class="metrics" aria-label="Account overview">
+      <article class="glass metric"><span class="metric-label">Depository balances</span><strong id="cash-total">—</strong><span class="metric-desc">Sum of reported current balances · may be cached</span></article>
+      <article class="glass metric"><span class="metric-label">Credit balances owed</span><strong id="credit-total">—</strong><span class="metric-desc">Reported balances · not a payoff quote</span></article>
+      <article class="glass metric"><span class="metric-label">Connected institutions</span><strong id="connected-count">0 of 7</strong><span class="metric-desc">Authorized connections in your vault</span></article>
+      <article class="glass metric"><span class="metric-label">Recorded transactions</span><strong id="transaction-count">0</strong><span class="metric-desc">From connected sources and manual imports</span></article>
+    </section>
+    <div class="section-title"><div><p class="overline">YOUR NETWORK</p><h2>Accounts & institutions</h2></div><span class="muted micro" id="provider-mode"></span></div>
+    <section class="institution-grid" id="institutions" aria-label="Seven financial institutions"></section>
+    <div class="section-title"><div><p class="overline">YOUR ACTIVITY</p><h2>Recent transactions</h2></div><label class="search-label" for="query">Find an entry <input type="search" id="query" placeholder="Search transactions"></label></div>
+    <section class="glass table-wrap"><div class="scroll"><table><thead><tr><th>Date</th><th>Description</th><th>Institution / account</th><th>Amount</th><th>Source</th></tr></thead><tbody id="entries"></tbody></table></div><p class="muted empty-note" id="no-entries">No transactions yet. Link an institution or import a statement.</p></section>
+    <section class="glass import-panel">
+      <div><p class="overline">OFFLINE FALLBACK</p><h2>Import a statement</h2><p class="muted">For institutions without compatible linking, select a normalized CSV. Rows are encrypted locally after import.</p></div>
+      <form id="import-form"><label for="institution">Institution</label><select id="institution" required></select><label for="label">Account nickname (not an account number)</label><input id="label" maxlength="64" value="Primary" required><label for="csv">CSV file · date,description,amount</label><input id="csv" type="file" accept=".csv,text/csv" required><button type="submit" class="primary">Import securely</button></form>
+    </section>
+    <footer><strong>GoreeCloud Finances</strong> · Local development preview. Provider availability is not guaranteed. A successful check does not mean a bank has supplied new data. Never enter bank passwords into GoreeCloud Finances.</footer>
+  </div>
+</main>
+<div class="sr-status" role="status" aria-live="polite" id="messages"></div>
+</div>
+</body>
+</html>

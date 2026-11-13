@@ -1,6 +1,23 @@
-# GoreeCloud Finances — local-only, read-only development prototype
+# GoreeCloud Finances — read-only personal financial dashboard
 
-**Maturity:** isolated prototype; not a released GoreeCloud service, financial advice, bank-approved integration, or live account data access.
+**Maturity:** v0.6.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
+
+## Private owner dashboard (new)
+
+Requires **Node.js 22+**. No npm install or third-party runtime packages are needed.
+
+```sh
+npm start
+# Open http://127.0.0.1:8787/ on the same computer.
+```
+
+On first launch, **create your own username and password** for the GoreeCloud Finances app. The password encrypts the local vault; it is **not** a bank login. Sign in to see all seven institution cards and any account data you've linked or imported. Every app opening initiates a refresh check of existing connected providers; the UI reports the check time and how recently the upstream source says its data was updated.
+
+**Live banking connections are not enabled by default.** A read-only Plaid Link adapter is available only when you supply your own authorized Plaid credentials and confirm the required product access, provider coverage, terms and costs. One-time institution authorization is attempted **per provider** where supported; not all providers or account types are guaranteed compatible. No banking password is stored by the app. Connections can be revoked from the dashboard. The hosted local mode stores imported CSV and provider tokens **encrypted at rest**.
+
+See [setup, configuration, security and refresh behavior](docs/PRIVATE_DASHBOARD.md) and [Security policy](SECURITY.md).
+
+## Earlier completely offline viewer
 
 ## Features
 
@@ -16,13 +33,7 @@
 - CSP denies outbound connectivity and all account/payment integrations. No credentials, cookies, localStorage, persistent database, analytics, external assets, external scripts, or network APIs.
 - Alpha styling uses selected **verified** GoreeCloud UI token values from `GoreeCloud/gc-ui` (`src/tokens.css`, reviewed November 13, 2026). GC UI itself is alpha and the subset is not a stable design-system package.
 
-## Public source boundary
-
-This public repository contains **source code only**, never actual account data. The program works locally without institution APIs, banking credentials, an account authorization flow, telemetry, or hosted backend. A public source repository does not make your private account data public.
-
-**Maturity: v0.5.0 prototype**, not a stable release or production service. Provider support is not verified. There are no third-party runtime dependencies.
-
-## Run offline
+## Run the original standalone offline viewer
 
 Open `app/index.html` in a recent browser. The application is static and works without a web server; all local resources are bundled.
 
@@ -30,7 +41,7 @@ Open `app/index.html` in a recent browser. The application is static and works w
 
 ```sh
 python -m unittest discover -s tests -v
-node --test tests/*.test.cjs
+npm test
 ```
 
 Browser smoke tests (optional) require Python Playwright and Chromium. Run `python -m unittest tests/browser_smoke.py -v`; it starts a temporary localhost static server but the app never contacts a bank or external endpoint. **In this execution environment, Chromium navigation is blocked by administrator policy (`ERR_BLOCKED_BY_ADMINISTRATOR`), so browser QA is not yet verified.**
@@ -67,6 +78,6 @@ date,description,amount
 
 1. Review founder-approved UI tokens and screen-reader/visual acceptance.
 2. Add a vetted bank-specific local CSV import profile only after examining a redacted, authorized sample and documented export semantics.
-3. Maintain only sanitized, generic application source in the authorized **public** GoreeCloud/finances repository. Never commit real statements, account identifiers, credentials, tokens, or private exports to GitHub or Drive.
+3. Keep this **public source repository** free of real financial data, account identifiers, secrets and statement exports. Never publish private data in tests or issues.
 4. Verify each provider's lawful access model, product/account coverage, token scopes, consent, and revocation. Disabled until verified.
 5. Independent security review and proper Identity/GoreeShield/Wardveil/Mesh integrations before hosted deployment.
