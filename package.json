@@ -1,6 +1,6 @@
 {
   "name": "@goreecloud/finances",
-  "version": "0.7.0-alpha.0",
+  "version": "0.8.0-alpha.0",
   "description": "GoreeCloud Finances — private, read-only, local-first financial dashboard",
   "private": true,
   "engines": { "node": ">=22" },
@@ -10,5 +10,5 @@
     "vault:backup": "node cli/vault-backup.mjs backup",
     "vault:restore": "node cli/vault-backup.mjs restore"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

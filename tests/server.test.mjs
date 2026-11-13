@@ -7,7 +7,7 @@ import http from 'node:http';
 import { createFinanceServer } from '../server/app.mjs';
 import { makeVault } from '../server/vault.mjs';
 import { backupVault, restoreVault } from '../cli/vault-backup.mjs';
-import { makePlaid, centsFromProvider, applySync, matchesInstitution } from '../server/plaid.mjs';
+import { makePlaid, centsFromProvider, cleanAccounts, applySync, matchesInstitution } from '../server/plaid.mjs';
 
 async function setup(plaid) {
   const folder = await mkdtemp(path.join(os.tmpdir(), 'finances-test-'));
@@ -266,4 +266,146 @@ test('parallel incorrect logins cannot bypass the five-attempt cooldown', async 
   const codes = attempts.map(a => a.code).sort();
   assert.deepEqual(codes, [401, 401, 401, 401, 401, 429]);
   assert.equal((await h.send('login', { username: 'owner_1', password: PASS })).code, 429);
+});
+
+test('overlapping CSV reimport persists additional identical occurrences without inventing totals', async t => {
+  const h = await setup(); t.after(() => h.close());
+  assert.equal((await h.send('setup', { username: 'owner_1', password: PASS })).code, 201);
+  const head = 'date,description,amount\n';
+  const row = '2026-11-01,Repeated charge,-5.00\n';
+  const first = await h.send('import', { institution: 'Cash App', label: 'Daily', csv: head + row + row });
+  assert.deepEqual([first.value.added, first.value.duplicates], [2, 0]);
+  const second = await h.send('import', { institution: 'Cash App', label: 'Daily', csv: head + row + row + row });
+  assert.deepEqual([second.value.added, second.value.duplicates], [1, 2]);
+  const third = await h.send('import', { institution: 'Cash App', label: 'Daily', csv: head + row + row + row });
+  assert.deepEqual([third.value.added, third.value.duplicates], [0, 3]);
+  let dash = (await h.send('dashboard')).value;
+  assert.equal(dash.totalTransactions, 3);
+  assert.equal(dash.providers.find(x => x.name === 'Cash App').importedRows, 3);
+  assert.equal(dash.transactions.filter(x => x.description === 'Repeated charge').length, 3);
+  // Replay across a fresh process session validates persisted, encrypted storage.
+  await h.send('logout');
+  await h.send('login', { username: 'owner_1', password: PASS });
+  dash = (await h.send('dashboard')).value;
+  assert.equal(dash.totalTransactions, 3);
+  assert.equal((await h.send('import', { institution: 'PayPal', label: 'Daily', csv: head + row + row + row })).value.added, 3);
+  assert.equal((await h.send('dashboard')).value.totalTransactions, 6);
+});
+
+test('existing Plaid Item can renew consent without exchanging tokens or revealing access token', async t => {
+  const attempts = [];
+  let checked = 0;
+  const plaid = {
+    enabled: true, paidBalance: false, paidTxRefresh: false,
+    async exchange(publicToken) { attempts.push('exchange:' + publicToken); return { itemId: 'item-111', accessToken: 'SECRET_ACCESS' }; },
+    async institution() { attempts.push('institution'); return { id: 'ins111', name: 'PayPal' }; },
+    async createUpdateLinkToken(accessToken) { attempts.push('update-token:' + accessToken); return 'UPDATE_LINK_TOKEN'; },
+    async sync(item) { checked++; return { ...item, accounts: [], transactions: [], lastChecked: new Date().toISOString(), lastError: null }; },
+    async remove() {}
+  };
+  const h = await setup(plaid); t.after(() => h.close());
+  await h.send('setup', { username: 'owner_1', password: PASS });
+  assert.equal((await h.send('relink-token', { itemId: 'not-my-item' })).code, 404);
+  assert.equal((await h.send('connect', { institution: 'PayPal', publicToken: 'PUBLIC' })).code, 200);
+  const token = await h.send('relink-token', { itemId: 'item-111' });
+  assert.equal(token.code, 200);
+  assert.equal(token.value.linkToken, 'UPDATE_LINK_TOKEN');
+  assert.ok(!JSON.stringify(token.value).includes('SECRET_ACCESS'));
+  const done = await h.send('relink-complete', { itemId: 'item-111' });
+  assert.deepEqual([done.code, done.value.checked, done.value.success], [200, true, true]);
+  assert.equal(checked, 2);
+  assert.equal(attempts.filter(x => x.startsWith('exchange:')).length, 1);
+  assert.equal(attempts.filter(x => x === 'update-token:SECRET_ACCESS').length, 1);
+  assert.equal((await h.send('dashboard')).value.linkedItems, 1);
+  assert.equal((await h.send('relink-complete', { itemId: 'other' })).code, 404);
+});
+
+test('Plaid update token requests only repair existing consent and no new product scopes', async () => {
+  const calls = [];
+  const client = makePlaid({ GOREE_PLAID_CLIENT_ID: 'id', GOREE_PLAID_SECRET: 'synthetic-secret', GOREE_PLAID_ENV: 'sandbox' },
+    async (url, args) => {
+      calls.push({ url, body: JSON.parse(args.body) });
+      return { ok: true, async json() { return { link_token: 'UPDATE_TOKEN' }; } };
+    });
+  assert.equal(await client.createUpdateLinkToken('SYNTHETIC_ACCESS_TOKEN'), 'UPDATE_TOKEN');
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0].url).pathname, '/link/token/create');
+  assert.equal(calls[0].body.access_token, 'SYNTHETIC_ACCESS_TOKEN');
+  assert.equal('products' in calls[0].body, false);
+  assert.equal('additional_consented_products' in calls[0].body, false);
+  assert.equal('transfer' in calls[0].body, false);
+  await assert.rejects(client.createUpdateLinkToken(''), /Missing existing provider authorization/);
+});
+
+test('Plaid reconnect refuses institution identity changes and preserves original link', async t => {
+  let identity = { id: 'ins1', name: 'PayPal' };
+  const plaid = { enabled: true, paidBalance: false, paidTxRefresh: false,
+    async exchange() { return { itemId: 'item-one', accessToken: 'SYNTHETIC_SECRET' }; },
+    async institution() { return identity; },
+    async sync(item) { return { ...item, accounts: [], transactions: [], lastChecked: '2026-11-13T00:00:00.000Z', lastError: null }; },
+    async createUpdateLinkToken() { return 'UPDATE_TOKEN'; },
+    async remove() {} };
+  const h = await setup(plaid); t.after(() => h.close());
+  await h.send('setup', { username: 'owner_1', password: PASS });
+  assert.equal((await h.send('connect', { institution: 'PayPal', publicToken: 'PUBLIC' })).code, 200);
+  identity = { id: 'ins2', name: 'PayPal' };
+  assert.equal((await h.send('relink-complete', { itemId: 'item-one' })).code, 409);
+  assert.equal((await h.send('dashboard')).value.linkedItems, 1);
+  identity = { id: 'ins1', name: 'Capital One' };
+  assert.equal((await h.send('relink-complete', { itemId: 'item-one' })).code, 409);
+  assert.equal((await h.send('dashboard')).value.linkedItems, 1);
+});
+
+
+test('refresh runs independent providers with bounded concurrency and preserves failed data', async t => {
+  let issued = 0, running = 0, peak = 0, inRefresh = false;
+  const plaid = {
+    enabled: true, paidBalance: false, paidTxRefresh: false,
+    async exchange() {
+      issued++;
+      return { itemId: 'item-' + issued, accessToken: 'synthetic-token-' + issued };
+    },
+    async institution() { return { id: 'ins1', name: 'PayPal' }; },
+    async sync(item) {
+      if (!inRefresh) return { ...item, accounts: [{ id: item.id, name: 'Test Account', currentCents: '100' }],
+        transactions: [{ id: item.id + '-tx', accountId: item.id, date: '2026-11-13', description: 'Synthetic', cents: '100' }],
+        lastChecked: '2026-11-13T00:00:00Z', lastError: null };
+      running++; peak = Math.max(peak, running);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 18));
+        if (item.id === 'item-3') throw new Error('Synthetic provider outage');
+        return { ...item, lastChecked: '2026-11-13T12:00:00Z', lastError: null };
+      } finally { running--; }
+    },
+    async remove() {}
+  };
+  const h = await setup(plaid); t.after(() => h.close());
+  await h.send('setup', { username: 'owner_1', password: PASS });
+  for (let i = 0; i < 7; i++) {
+    assert.equal((await h.send('connect', { institution: 'PayPal', publicToken: 'fake-public-' + i })).code, 200);
+  }
+  inRefresh = true;
+  const response = await h.send('refresh');
+  assert.deepEqual([response.value.checked, response.value.successes, response.value.failures], [7, 6, 1]);
+  assert.ok(peak > 1 && peak <= 3, 'expected bounded parallelism, saw ' + peak);
+  const data = (await h.send('dashboard')).value;
+  assert.equal(data.linkedItems, 7);
+  assert.equal(data.totalTransactions, 7);
+  assert.equal(data.providers.find(x => x.name === 'PayPal').links.filter(x => x.status === 'error').length, 1);
+  assert.equal(data.providers.find(x => x.name === 'PayPal').links.filter(x => x.status === 'checked').length, 6);
+});
+
+
+test('provider data caps fail closed instead of silently claiming complete history', () => {
+  const sixtyOne = Array.from({ length: 61 }, (_, i) => ({ account_id: 'a' + i, name: 'Synthetic ' + i }));
+  assert.throws(() => cleanAccounts(sixtyOne), /more accounts/);
+  assert.throws(() => cleanAccounts([{ name: 'Missing identifier' }]), /identity/);
+  const tenThousand = Array.from({ length: 10000 }, (_, i) => ({
+    id: 't' + i, date: '2026-11-13', accountId: 'acct', cents: '-100', pending: false, description: 'Synthetic'
+  }));
+  assert.equal(applySync(tenThousand, []).length, 10000);
+  const newTx = { transaction_id: 'extra', account_id: 'acct', date: '2026-11-13',
+    iso_currency_code: 'USD', amount: 1.25, name: 'Extra synthetic transaction' };
+  assert.throws(() => applySync(tenThousand, [{ added: [newTx], modified: [], removed: [] }]), /transaction limit exceeded/);
+  assert.equal(tenThousand.length, 10000);
 });
