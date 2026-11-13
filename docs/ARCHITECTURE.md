@@ -1,6 +1,6 @@
 # GoreeCloud Finances — architecture and trust boundaries
 
-The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.9.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login, password rotation, ciphertext backup/restore, and optional Plaid integration.
+The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.10.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login, password rotation, ciphertext backup/restore, and optional Plaid integration.
 
 - `server/main.mjs`: loopback startup only, Node.js 22+.
 - `server/app.mjs`: same-origin authenticated API, session and CSRF/Origin/Host checks, login rate limits, request size bounds, local static UI, imported statement handling, account cards and refresh-on-open endpoint.
@@ -45,3 +45,8 @@ See [Local private dashboard](PRIVATE_DASHBOARD.md) and [Security](../SECURITY.m
 The local dashboard response now returns count/overview data but **not** an automatic top-200 transaction payload. A separate authenticated, CSRF-protected POST-only search endpoint (/api/transactions) decrypts the owner vault on the loopback server, validates institution/source/text/ISO date/page constraints, filters and sorts the full **locally stored** record set, and returns bounded pages (default 50, max 100). The browser progressively requests additional pages, discards out-of-order responses after filter changes/logout, and uses text-only DOM construction to prevent user-supplied descriptions from becoming HTML. Request bodies and server no-store headers limit accidental search disclosure; local account/provider credentials are not included in the response.
 
 This is not an immutable page cursor or provider-grade financial reconciliation. If sync/import mutates the saved record set while browsing, the UI reloads its first page. The locally stored data may already be stale or incomplete due to provider availability, retention caps, and unverified institution connections. Cross-source duplicate reconciliation, screen-reader/browser acceptance and full MIPS integration remain open.
+
+
+## v0.10 — optional paid request-count safety
+
+server/paid-guard.mjs implements a locally durable rolling 24-hour request reservation ledger, requiring explicit request-count caps and provider-product opt-in. The journal is separate from the encrypted data vault and contains only HMAC-digested Item identifiers, operation types and timestamps. It uses a private directory and private files, exclusive file-create process locking, no-follow reads, atomic rename, fsync before any optional outbound provider request, and a clock high-water check. Direct generic adapter calls cannot bypass the private in-process paid-authorization marker. Failed/uncertain paid requests consume their reservations. If any reservation is denied, missing, unsafe or locked, normal cached calls continue instead. A lost/deleted budget journal can reset local history and cannot govern other hosts. Dollar budget enforcement, complete webhook reconciliation, live provider fees, trusted OS protection and production security remain OPEN.

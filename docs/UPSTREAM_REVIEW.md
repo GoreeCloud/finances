@@ -37,3 +37,8 @@ Official Plaid guidance (https://plaid.com/docs/link/update-mode/) describes a t
 ## v0.8 targeted open-source license decision
 
 The existing public repository lacked a LICENSE file and was marked UNLICENSED in package metadata. The owner-governed licensing policy requires a repository-specific recognized open-source license. Its tracked source is first-party and dependency-free at runtime; the only known design-token subset is derived from MIT-licensed GoreeCloud UI source. MIT was adopted in the repository root with the 2026 GoreeCloud copyright holder and an explicit attribution NOTICE. This assessment is **specific to current source only**: new third-party libraries, branding assets, provider SDKs or imported sources require independent provenance and licensing review before inclusion. The public repository name and bank labels do not imply trademark authorization.
+
+
+## v0.10 Plaid charge and refresh verification
+
+Plaid documentation at https://plaid.com/docs/account/billing/ identifies per-request Balance and Transactions Refresh fee models, subject to the individual Plaid agreement. Transaction refresh information at https://plaid.com/docs/transactions/webhooks/ describes asynchronous provider updates and SYNC_UPDATES_AVAILABLE callbacks. This documentation informed the local fail-closed request-count gate. Actual product eligibility, account permissions, signed agreement, billing rates, webhooks and live provider availability were NOT checked and remain separate release gates.

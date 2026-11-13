@@ -1,4 +1,5 @@
 // Explicit Plaid read-only allowlist; no payment/transfer capabilities.
+import { makePaidGuard, validCap, defaultLedgerFile } from './paid-guard.mjs';
 const HOSTS = Object.freeze({ sandbox: 'https://sandbox.plaid.com', development: 'https://development.plaid.com', production: 'https://production.plaid.com' });
 const ALLOWED = new Set(['/link/token/create', '/item/public_token/exchange', '/accounts/get', '/accounts/balance/get', '/transactions/sync', '/transactions/refresh', '/item/get', '/item/remove', '/institutions/get_by_id']);
 export const PROVIDERS = Object.freeze(['Navy Federal Credit Union', 'Cash App', 'Varo', 'Capital One', 'Marcus by Goldman Sachs', 'Discover', 'PayPal']);
@@ -66,24 +67,28 @@ export function applySync(oldRows, pages) {
 export function makePlaid(env = process.env, request = fetch) {
   const environment = env.GOREE_PLAID_ENV || 'sandbox';
   const enabled = Boolean(env.GOREE_PLAID_CLIENT_ID && env.GOREE_PLAID_SECRET && HOSTS[environment]);
-  const paidBalance = enabled && env.GOREE_PLAID_REALTIME_BALANCE === 'true';
-  const paidTxRefresh = enabled && env.GOREE_PLAID_TRANSACTION_REFRESH === 'true';
-  // Repeated page opens must never trigger a new billable request every time.
-  const PAID_COOLDOWN_MS = 30 * 60 * 1000;
-  const lastPaidAttempts = new Map();
-  function takePaidAllowance(item, operation, previousTime) {
-    const cacheKey = item.id + '|' + operation;
-    const previous = Math.max(lastPaidAttempts.get(cacheKey) || 0, Date.parse(previousTime || '') || 0);
-    const now = Date.now();
-    if (now - previous < PAID_COOLDOWN_MS) return null;
-    lastPaidAttempts.set(cacheKey, now); // Recorded before the call even if it fails.
-    return new Date(now).toISOString();
-  }
-  async function call(path, input = {}) {
+  const capsValid = validCap(env.GOREE_PLAID_PAID_DAILY_CAP) &&
+    validCap(env.GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP) &&
+    Number(env.GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP) <= Number(env.GOREE_PLAID_PAID_DAILY_CAP);
+  // Flags alone cannot authorize billable endpoints; explicit numeric limits and
+  // the durable private ledger are required in addition to product opt-in.
+  const guard = enabled && capsValid ? makePaidGuard({
+    file: env.GOREE_PLAID_PAID_LEDGER_FILE || defaultLedgerFile(),
+    dailyLimit: Number(env.GOREE_PLAID_PAID_DAILY_CAP),
+    itemDailyLimit: Number(env.GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP)
+  }) : null;
+  const paidBalance = enabled && Boolean(guard) && env.GOREE_PLAID_REALTIME_BALANCE === 'true';
+  const paidTxRefresh = enabled && Boolean(guard) && env.GOREE_PLAID_TRANSACTION_REFRESH === 'true';
+  const paidRequested = enabled && (env.GOREE_PLAID_REALTIME_BALANCE === 'true' ||
+    env.GOREE_PLAID_TRANSACTION_REFRESH === 'true');
+  const PAID_AUTHORIZED = Symbol('private durable paid reservation');
+  async function call(path, input = {}, approval = null) {
     if (!enabled) throw new Error('Plaid is not configured');
     if (!ALLOWED.has(path)) throw new Error('Forbidden provider operation');
     if (path === '/accounts/balance/get' && !paidBalance) throw new Error('Real-time balance not enabled');
     if (path === '/transactions/refresh' && !paidTxRefresh) throw new Error('On-demand transaction refresh not enabled');
+    if ((path === '/accounts/balance/get' || path === '/transactions/refresh') &&
+        approval !== PAID_AUTHORIZED) throw new Error('Durable paid request reservation required');
     const response = await request(HOSTS[environment] + path, {
       method: 'POST', redirect: 'error',
       headers: { 'content-type': 'application/json', 'PLAID-CLIENT-ID': env.GOREE_PLAID_CLIENT_ID, 'PLAID-SECRET': env.GOREE_PLAID_SECRET },
@@ -132,21 +137,47 @@ export function makePlaid(env = process.env, request = fetch) {
   }
   async function sync(item) {
     const target = { ...item };
-    // Optional paid calls use a 30-minute local cooldown; ordinary reads happen
-    // on every open. Freshness is the provider's timestamp, not the request time.
-    if (paidTxRefresh) {
-      const stamp = takePaidAllowance(item, 'transactions', item.lastPaidTxRefreshAt);
-      if (stamp) {
-        target.lastPaidTxRefreshAt = stamp;
-        await call('/transactions/refresh', { access_token: target.accessToken });
+    // The journal reservation is a durable, owner-private request-count cap.
+    // It is written and fsynced BEFORE any optional billable API request.
+    // Missing/corrupt/locked journals fail closed to ordinary cached reads.
+    const paidNotices = [];
+    async function optionalPaid(operation, route) {
+      let reservation;
+      try { reservation = await guard.reserve(item.id, operation); }
+      catch {
+        paidNotices.push('Optional ' + operation + ' request blocked by private budget ledger.');
+        return null;
+      }
+      if (!reservation.allowed) {
+        paidNotices.push('Optional ' + operation + ' request skipped (' + reservation.reason + ').');
+        return null;
+      }
+      const stamp = new Date(reservation.at).toISOString();
+      try {
+        return { stamp, response: await call(route, { access_token: target.accessToken }, PAID_AUTHORIZED) };
+      } catch {
+        // A failed/uncertain request still consumes an allowance. This avoids
+        // repeating potentially billable calls when the response was lost.
+        paidNotices.push('Optional ' + operation + ' request failed; cached data used.');
+        return { stamp, response: null };
       }
     }
-    const balanceStamp = paidBalance ? takePaidAllowance(item, 'balance', item.lastPaidBalanceAt) : null;
+    if (paidTxRefresh) {
+      const result = await optionalPaid('transactions', '/transactions/refresh');
+      if (result) target.lastPaidTxRefreshAt = result.stamp;
+    }
+    let balance = null;
+    if (paidBalance) {
+      const result = await optionalPaid('balance', '/accounts/balance/get');
+      if (result) {
+        target.lastPaidBalanceAt = result.stamp;
+        balance = result.response;
+      }
+    }
     const [accounts, details] = await Promise.all([
-      call(balanceStamp ? '/accounts/balance/get' : '/accounts/get', { access_token: target.accessToken }),
+      balance ? Promise.resolve(balance) : call('/accounts/get', { access_token: target.accessToken }),
       call('/item/get', { access_token: target.accessToken })
     ]);
-    if (balanceStamp) target.lastPaidBalanceAt = balanceStamp;
 
     // Plaid can mutate the feed during pagination. On the special mutation error
     // all pages must be discarded and the entire loop restarted from the original
@@ -185,8 +216,9 @@ export function makePlaid(env = process.env, request = fetch) {
     target.lastChecked = new Date().toISOString();
     target.lastProviderUpdate = details.item?.status?.transactions?.last_successful_update || null;
     target.lastError = null;
-    target.balanceSource = balanceStamp ? 'on-demand' : 'cached';
+    target.balanceSource = balance ? 'on-demand' : 'cached';
+    target.paidNotice = paidNotices.length ? paidNotices.join(' ') : null;
     return target;
   }
-  return { enabled, environment, paidBalance, paidTxRefresh, createLinkToken, createUpdateLinkToken, exchange, institution, remove, sync, call };
+  return { enabled, environment, paidBalance, paidTxRefresh, paidRequested, paidLimitsReady: Boolean(guard), createLinkToken, createUpdateLinkToken, exchange, institution, remove, sync, call };
 }

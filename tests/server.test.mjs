@@ -8,6 +8,7 @@ import { createFinanceServer } from '../server/app.mjs';
 import { makeVault } from '../server/vault.mjs';
 import { backupVault, restoreVault } from '../cli/vault-backup.mjs';
 import { makePlaid, centsFromProvider, cleanAccounts, applySync, matchesInstitution } from '../server/plaid.mjs';
+import { makePaidGuard, validCap } from '../server/paid-guard.mjs';
 
 async function setup(plaid) {
   const folder = await mkdtemp(path.join(os.tmpdir(), 'finances-test-'));
@@ -192,10 +193,14 @@ test('Plaid pagination mutation restarts from the original cursor and discards p
   assert.ok(!result.transactions.some(x => x.id === 'discard-me'));
 });
 
-test('paid refresh calls are suppressed within cooldown, but routine reads still run', async () => {
+test('paid refresh calls are suppressed within cooldown, but routine reads still run', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'goree-fin-paid-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   const paths = [];
   const fake = makePlaid({ GOREE_PLAID_CLIENT_ID: 'id', GOREE_PLAID_SECRET: 'secret', GOREE_PLAID_ENV: 'sandbox',
-    GOREE_PLAID_REALTIME_BALANCE: 'true', GOREE_PLAID_TRANSACTION_REFRESH: 'true' }, async (url) => {
+    GOREE_PLAID_REALTIME_BALANCE: 'true', GOREE_PLAID_TRANSACTION_REFRESH: 'true',
+    GOREE_PLAID_PAID_DAILY_CAP: '4', GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP: '2',
+    GOREE_PLAID_PAID_LEDGER_FILE: path.join(dir, 'journal', 'paid-requests.json') }, async (url) => {
     const endpoint = new URL(url).pathname; paths.push(endpoint);
     if (endpoint === '/accounts/balance/get' || endpoint === '/accounts/get') return { ok: true, async json() { return { accounts: [] }; } };
     if (endpoint === '/item/get') return { ok: true, async json() { return { item: { status: { transactions: {} } } }; } };
@@ -495,4 +500,162 @@ test('stored-history API requires a session and CSRF, refuses unsafe filters and
   });
   assert.equal(queryResponse.status, 400);
   assert.equal((await h.send('transactions', { page: 0, pageSize: 50 })).code, 200);
+});
+
+
+test('durable budget enforces rolling global and per-item caps after guard recreation', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fin-paid-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'private', 'ledger.json');
+  let now = Date.UTC(2026, 10, 13, 14);
+  const guard = () => makePaidGuard({ file, dailyLimit: 3, itemDailyLimit: 2, clock: () => now });
+  assert.equal((await guard().reserve('item-1', 'transactions')).allowed, true);
+  assert.equal((await guard().reserve('item-1', 'transactions')).reason, 'cooldown');
+  assert.equal((await guard().reserve('item-1', 'balance')).allowed, true);
+  now += 31 * 60 * 1000;
+  assert.equal((await guard().reserve('item-1', 'transactions')).reason, 'item-cap');
+  assert.equal((await guard().reserve('item-2', 'transactions')).allowed, true);
+  assert.equal((await guard().reserve('item-3', 'balance')).reason, 'daily-cap');
+  const disk = await readFile(file, 'utf8');
+  assert.equal((await stat(file)).mode & 0o077, 0);
+  for (const text of ['item-1', 'item-2', 'access_token', 'transaction_id']) assert.equal(disk.includes(text), false);
+  now += 25 * 60 * 60 * 1000;
+  assert.equal((await guard().reserve('item-1', 'balance')).allowed, true);
+});
+
+test('private paid ledger denies symlink, broad permissions, stale lock and clock rollback', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fin-paid-security-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'private', 'ledger.json');
+  const guard = makePaidGuard({ file, dailyLimit: 3, itemDailyLimit: 1, clock: () => 1_800_000_000_000 });
+  assert.equal((await guard.reserve('item', 'balance')).allowed, true);
+  await chmod(file, 0o644);
+  await assert.rejects(guard.reserve('another', 'balance'), /ledger unavailable/);
+  await chmod(file, 0o600);
+  const lock = file + '.lock';
+  await writeFile(lock, 'synthetic locked', { mode: 0o600 });
+  await assert.rejects(guard.reserve('another', 'balance'), /ledger unavailable/);
+  await rm(lock);
+  const earlier = makePaidGuard({ file, dailyLimit: 3, itemDailyLimit: 1, clock: () => 1_700_000_000_000 });
+  await assert.rejects(earlier.reserve('another', 'balance'), /ledger unavailable/);
+  const valid = await guard.reserve('another', 'balance');
+  assert.equal(valid.allowed, true);
+  const fake = path.join(dir, 'fake.json');
+  await writeFile(fake, await readFile(file), { mode: 0o600 });
+  await rm(file);
+  await symlink(fake, file);
+  await assert.rejects(guard.reserve('third', 'balance'), /ledger unavailable/);
+});
+
+test('paid flags alone cannot make billable requests without explicit cap configuration', async () => {
+  const paths = [];
+  const fake = makePlaid({
+    GOREE_PLAID_CLIENT_ID: 'id', GOREE_PLAID_SECRET: 'synthetic',
+    GOREE_PLAID_REALTIME_BALANCE: 'true', GOREE_PLAID_TRANSACTION_REFRESH: 'true'
+  }, async (url) => {
+    const endpoint = new URL(url).pathname; paths.push(endpoint);
+    if (endpoint === '/accounts/get') return { ok: true, async json() { return { accounts: [] }; } };
+    if (endpoint === '/item/get') return { ok: true, async json() { return { item: { status: { transactions: {} } } }; } };
+    if (endpoint === '/transactions/sync') return { ok: true, async json() { return { added: [], removed: [], modified: [], next_cursor: 'synthetic', has_more: false }; } };
+    throw new Error('Unexpected billable endpoint');
+  });
+  assert.equal(fake.paidBalance, false);
+  assert.equal(fake.paidTxRefresh, false);
+  assert.equal(fake.paidRequested, true);
+  assert.equal(fake.paidLimitsReady, false);
+  const result = await fake.sync({ id: 'item', accessToken: 'fake', transactions: [] });
+  assert.equal(result.balanceSource, 'cached');
+  assert.deepEqual(paths, ['/accounts/get', '/item/get', '/transactions/sync']);
+  assert.equal(validCap('0'), false);
+  assert.equal(validCap('100'), true);
+  assert.equal(validCap('101'), false);
+  assert.equal(validCap('05'), false);
+});
+
+test('concurrent paid reservations cannot exceed hard cap across independent instances', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fin-paid-concurrent-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'private', 'ledger.json');
+  const clients = Array.from({ length: 12 }, (_, i) => makePaidGuard({ file, dailyLimit: 2, itemDailyLimit: 1 }));
+  const results = await Promise.all(clients.map((client, i) =>
+    client.reserve('i-' + i, 'balance').catch(() => ({ allowed: false, reason: 'locked' }))));
+  const successes = results.filter(x => x.allowed);
+  assert.ok(successes.length >= 1 && successes.length <= 2, 'allowed=' + successes.length);
+  const disk = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(disk.entries.length, successes.length);
+  assert.ok(disk.entries.length <= 2);
+});
+
+
+test('paid endpoints cannot bypass durable reservation through generic adapter call', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fin-paid-entrypoint-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  let paid = 0;
+  const fake = makePlaid({
+    GOREE_PLAID_CLIENT_ID: 'id', GOREE_PLAID_SECRET: 'synthetic-secret',
+    GOREE_PLAID_REALTIME_BALANCE: 'true', GOREE_PLAID_TRANSACTION_REFRESH: 'true',
+    GOREE_PLAID_PAID_DAILY_CAP: '2', GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP: '2',
+    GOREE_PLAID_PAID_LEDGER_FILE: path.join(dir, 'private', 'ledger.json')
+  }, async (url) => {
+    if (url.endsWith('/accounts/balance/get') || url.endsWith('/transactions/refresh')) paid++;
+    return { ok: true, async json() { return {}; } };
+  });
+  await assert.rejects(fake.call('/accounts/balance/get', { access_token: 'fake' }), /Durable paid request reservation required/);
+  await assert.rejects(fake.call('/transactions/refresh', { access_token: 'fake' }), /Durable paid request reservation required/);
+  assert.equal(paid, 0);
+});
+
+test('failed on-demand requests consume reservation before network and never automatically retry after restart', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fin-paid-timeout-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const env = {
+    GOREE_PLAID_CLIENT_ID: 'id', GOREE_PLAID_SECRET: 'fake',
+    GOREE_PLAID_REALTIME_BALANCE: 'true', GOREE_PLAID_PAID_DAILY_CAP: '1',
+    GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP: '1',
+    GOREE_PLAID_PAID_LEDGER_FILE: path.join(dir, 'private', 'ledger.json')
+  };
+  const seen = [];
+  const request = async url => {
+    const endpoint = new URL(url).pathname;
+    seen.push(endpoint);
+    if (endpoint === '/accounts/balance/get') throw new Error('Synthetic network timeout AFTER provider may have received request');
+    if (endpoint === '/accounts/get') return { ok: true, async json() { return { accounts: [] }; } };
+    if (endpoint === '/item/get') return { ok: true, async json() { return { item: { status: { transactions: {} } } }; } };
+    if (endpoint === '/transactions/sync') return { ok: true, async json() { return { added: [], modified: [], removed: [], next_cursor: 'test', has_more: false }; } };
+    throw new Error('Unexpected endpoint: ' + endpoint);
+  };
+  const item = { id: 'test-item', accessToken: 'synthetic', transactions: [] };
+  const first = await makePlaid(env, request).sync(item);
+  assert.equal(first.balanceSource, 'cached');
+  assert.match(first.paidNotice, /request failed/);
+  const second = await makePlaid(env, request).sync(item);
+  assert.equal(second.balanceSource, 'cached');
+  assert.match(second.paidNotice, /daily-cap/);
+  assert.equal(seen.filter(x => x === '/accounts/balance/get').length, 1);
+  assert.equal(seen.filter(x => x === '/accounts/get').length, 2);
+});
+
+test('corrupt or unavailable paid journal skips billable calls without blocking cached sync', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fin-paid-corrupt-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'private', 'ledger.json');
+  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  await writeFile(file, '{ invalid JSON', { mode: 0o600 });
+  let paid = 0;
+  const fake = makePlaid({
+    GOREE_PLAID_CLIENT_ID: 'id', GOREE_PLAID_SECRET: 'fake',
+    GOREE_PLAID_REALTIME_BALANCE: 'true', GOREE_PLAID_PAID_DAILY_CAP: '3',
+    GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP: '2', GOREE_PLAID_PAID_LEDGER_FILE: file
+  }, async url => {
+    const endpoint = new URL(url).pathname;
+    if (endpoint === '/accounts/balance/get') paid++;
+    if (endpoint === '/accounts/get') return { ok: true, async json() { return { accounts: [] }; } };
+    if (endpoint === '/item/get') return { ok: true, async json() { return { item: { status: { transactions: {} } } }; } };
+    if (endpoint === '/transactions/sync') return { ok: true, async json() { return { added: [], modified: [], removed: [], next_cursor: 't', has_more: false }; } };
+    throw Error('Unexpected endpoint');
+  });
+  const state = await fake.sync({ id: 'item', accessToken: 'fake', transactions: [] });
+  assert.equal(paid, 0);
+  assert.equal(state.balanceSource, 'cached');
+  assert.match(state.paidNotice, /budget ledger/);
 });
