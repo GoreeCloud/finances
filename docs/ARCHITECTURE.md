@@ -1,6 +1,6 @@
 # GoreeCloud Finances — architecture and trust boundaries
 
-The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.6.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login and optional Plaid integration.
+The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.7.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login, password rotation, ciphertext backup/restore, and optional Plaid integration.
 
 - `server/main.mjs`: loopback startup only, Node.js 22+.
 - `server/app.mjs`: same-origin authenticated API, session and CSRF/Origin/Host checks, login rate limits, request size bounds, local static UI, imported statement handling, account cards and refresh-on-open endpoint.
@@ -19,6 +19,14 @@ Seven intended provider categories: Navy Federal Credit Union, Cash App, Varo, C
 - **GoreeShield**: source minimization and local retention implemented in part; centralized consent/retention governance not yet integrated.
 - **Wardveil**: baseline code hardening and tests only; no integrated scanning/incident monitoring or independent audit.
 
-Not implemented: multi-user, encrypted backup and password recovery, production-safe remote access, OAuth re-link update mode, provider webhook receiver, full transaction reconciliation, platform-native Android app, commercial availability and provider-specific statement parsing. No live banking accounts were linked or verified for this work. The product is a development preview, not Anchor or production.
+Not implemented: multi-user, forgotten-password recovery, production-safe remote access, OAuth re-link update mode, provider webhook receiver, full transaction reconciliation, platform-native Android app, commercial availability and provider-specific statement parsing. No live banking accounts were linked or verified for this work. The product is a development preview, not Anchor or production.
 
 See [Local private dashboard](PRIVATE_DASHBOARD.md) and [Security](../SECURITY.md).
+
+
+## v0.7 security and synchronization changes
+
+- The vault can rotate its password after re-verifying the current password. This decrypts and re-encrypts all state with a fresh salt, writes an atomic replacement, and revokes older sessions. Stale keys are rejected for writes.
+- A local backup CLI copies the sealed encrypted vault into a private destination without reading plaintext. Restore refuses to overwrite any existing vault. Backups still require the corresponding password for decryption.
+- Plaid sync restarts from the original cursor on transaction mutation during pagination, never committing partial batches. Up to three attempts are made. Paid on-demand requests have a per-item 30-minute cooldown tracked in process memory and (on successful sync) encrypted state. It is not a production billing cap.
+- Tests cover rotation, backup/restore, permission and symlink refusal, pagination restart and paid cooldown. Formal browser, accessibility, independent security and production provider validation remain incomplete.

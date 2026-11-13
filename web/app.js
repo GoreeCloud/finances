@@ -142,13 +142,17 @@
         onSuccess: async publicToken => {
           try { await api('connect', { publicToken, institution }); await loadDashboard(); await refresh('open'); alertStatus(institution + ' authorized.'); }
           catch (error) { alertStatus('Could not connect: ' + error.message, true); }
-          finally { link.destroy(); }
+          finally { link.destroy(); linkBusy = false; if (details) renderProviders(); }
         },
-        onExit: () => { link.destroy(); linkBusy = false; renderProviders(); }
+        onExit: () => { link.destroy(); linkBusy = false; if (details) renderProviders(); }
       });
       link.open();
-    } catch (error) { alertStatus(error.message, true); }
-    finally { linkBusy = false; if (details) renderProviders(); }
+      // Keep the connect controls disabled until Plaid Link actually completes.
+    } catch (error) {
+      linkBusy = false;
+      alertStatus(error.message, true);
+      if (details) renderProviders();
+    }
   }
   async function start() {
     try {
@@ -169,6 +173,28 @@
       alertStatus(setup ? 'Local account created; vault encrypted.' : 'Welcome back.');
     } catch (error) { alertStatus(error.message, true); }
     finally { button.disabled = false; }
+  });
+  $('password-change-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = $('password-change-form'), button = form.querySelector('button');
+    const currentPassword = $('current-password').value;
+    const newPassword = $('new-password').value;
+    const confirmation = $('confirm-password').value;
+    if (newPassword !== confirmation) {
+      $('password-change-status').textContent = 'New passwords do not match.';
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await api('password/change', { currentPassword, newPassword });
+      csrf = response.csrf;
+      form.reset();
+      $('password-change-status').textContent = 'Vault re-encrypted. Other sign-in sessions were revoked.';
+      alertStatus('Your GoreeCloud Finances password has been changed.');
+    } catch (error) {
+      $('password-change-status').textContent = 'Password not changed: ' + error.message;
+      alertStatus('Could not change password: ' + error.message, true);
+    } finally { button.disabled = false; }
   });
   $('refresh').addEventListener('click', () => refresh('manual'));
   $('query').addEventListener('input', renderTransactions);

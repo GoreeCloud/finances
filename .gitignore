@@ -25,3 +25,7 @@ vault.json
 vault.json.*.tmp
 financial-data/
 node_modules/
+
+# Never stage an encrypted backup even if backup paths are customized.
+*.encrypted.json
+backups/
