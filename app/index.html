@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en" data-gc-theme="dark" data-gc-accent="lagoon">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'none'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<title>GoreeCloud Finances · Private statement viewer</title>
+<link rel="stylesheet" href="gc-tokens.css">
+<link rel="stylesheet" href="styles.css">
+<script defer src="finance.js"></script>
+<script defer src="main.js"></script>
+</head>
+<body class="gc-app">
+<a href="#main" class="skip-link">Skip to dashboard</a>
+<main class="shell" id="main">
+  <header class="topbar">
+    <div class="logo"><span class="brand-symbol" aria-hidden="true">◎</span><div><div class="overline">GOREECLOUD</div><div class="brand-title">Finances <span class="muted">/ Private preview</span></div></div></div>
+    <div class="right-header"><span class="status-dot" aria-hidden="true"></span><span>OFFLINE · READ ONLY</span></div>
+  </header>
+  <div class="intro"><div class="overline">FINANCIAL OVERVIEW</div><h1>Your money. <span>On your terms.</span></h1><p>View normalized transactions from CSV statements in a private, disconnected workspace. Live balances and banking connections are not available.</p></div>
+  <div class="section-heading"><h2>Statement activity</h2><label class="privacy-switch"><input type="checkbox" id="mask"> Hide amounts on screen</label></div>
+  <div class="stats">
+    <section class="glass stat"><div class="stat-label">Net statement flow</div><div class="stat-value" id="metric-net">$0.00</div><div class="stat-caption">Not a bank balance</div></section>
+    <section class="glass stat"><div class="stat-label">Money in</div><div class="stat-value" id="metric-in">$0.00</div><div class="stat-caption">Positive imported entries</div></section>
+    <section class="glass stat"><div class="stat-label">Money out</div><div class="stat-value" id="metric-out">$0.00</div><div class="stat-caption">Negative imported entries</div></section>
+    <section class="glass stat"><div class="stat-label">Imported entries</div><div class="stat-value" id="metric-count">0</div><div class="stat-caption">In memory until refresh</div></section>
+  </div>
+  <div class="two-columns">
+    <section class="glass"><div class="section-heading"><h2>Accounts & institutions</h2><span class="eyebrow">7 supported labels</span></div><p class="subcopy">These are offline import categories, not connected accounts.</p><div id="institutions" class="institutions"></div></section>
+    <section class="glass"><div class="section-heading"><h2>Import statement</h2><span class="eyebrow">CSV · Local only</span></div><p class="subcopy">All processing occurs in this browser session. Select a normalized statement with columns <code>date,description,amount</code>.</p>
+      <form id="import-form" novalidate>
+        <label for="institution">Financial institution</label><select id="institution" required></select>
+        <label for="account-label">Account label <span class="muted">(avoid account numbers)</span></label><input id="account-label" maxlength="64" value="Primary" autocomplete="off" required>
+        <label for="statement">CSV statement files</label><input type="file" id="statement" accept=".csv,text/csv" multiple required>
+        <p class="micro">Up to 20 files at a time · 2 MB and 10,000 rows each · USD · ISO dates (YYYY-MM-DD)</p>
+        <button type="submit" id="analyze" class="primary">Analyze locally</button>
+      </form>
+      <p id="result" role="status" aria-live="polite" class="result">No statement imported. Sample bank data is not included.</p>
+    </section>
+  </div>
+  <div class="two-columns lower">
+    <section class="glass"><div class="section-heading"><h2>Spending by institution</h2><span class="eyebrow">Filtered debits</span></div><div id="spend-chart" class="spend-chart"></div></section>
+    <section class="glass transactions-panel"><div class="section-heading"><h2>Transaction explorer</h2><button id="clear" class="secondary" disabled>Clear session</button></div>
+      <div class="filters"><label><span>Institution</span><select id="filter-institution"><option value="all">All institutions</option></select></label><label><span>Search description or label</span><input id="search" type="search" placeholder="Filter transactions" autocomplete="off"></label></div>
+      <div class="filters date-filters"><label><span>From date</span><input id="start-date" type="date" min="1900-01-01" max="2100-12-31"></label><label><span>Through date</span><input id="end-date" type="date" min="1900-01-01" max="2100-12-31"></label></div>
+      <p id="filter-error" class="filter-error" role="status" aria-live="polite"></p>
+      <p id="record-count" class="micro">0 transactions shown</p>
+      <div class="table-scroll"><table><caption class="sr-only">Imported transactions, newest first</caption><thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Institution / label</th><th scope="col">Amount</th></tr></thead><tbody id="transactions"></tbody></table></div>
+      <p id="table-empty" class="empty">No transactions in this view.</p><div class="pagination"><button type="button" id="page-prev" class="secondary" disabled>Previous</button><p id="table-note" class="micro" aria-live="polite"></p><button type="button" id="page-next" class="secondary" disabled>Next</button></div>
+    </section>
+  </div>
+  <section class="glass account-panel" aria-labelledby="account-title">
+    <div class="section-heading"><h2 id="account-title">Account movement audit</h2><span class="eyebrow">Filtered imported records · not verified balances</span></div>
+    <p class="subcopy">Compare the date coverage and movement below with original statements. Missing transactions and overlapping exports cannot be detected reliably without provider transaction identifiers.</p>
+    <div class="table-scroll"><table><caption class="sr-only">Account movement from imported statement entries</caption><thead><tr><th scope="col">Institution / label</th><th scope="col">First date</th><th scope="col">Last date</th><th scope="col">Entries</th><th scope="col">Net flow</th></tr></thead><tbody id="account-rows"></tbody></table></div>
+    <p id="account-empty" class="empty">No account movement in this view.</p>
+  </section>
+  <section class="glass monthly-panel" aria-labelledby="monthly-title">
+    <div class="section-heading"><h2 id="monthly-title">Monthly activity</h2><span class="eyebrow">Current filters · latest 24 months</span></div>
+    <p class="subcopy">Inflow and outflow from imported entries, grouped by calendar month. These values are not bank balances.</p>
+    <div class="table-scroll"><table><caption class="sr-only">Monthly imported statement flows</caption><thead><tr><th scope="col">Month</th><th scope="col">Entries</th><th scope="col">Money in</th><th scope="col">Money out</th><th scope="col">Net flow</th></tr></thead><tbody id="monthly-rows"></tbody></table></div>
+    <p id="monthly-empty" class="empty">No monthly activity in this view.</p><p id="monthly-note" class="micro"></p>
+  </section>
+  <footer><strong>Security boundary</strong><p>No credentials, live OAuth, uploads, analytics, transfers, cookies, or persistent storage. Exact-match row deduplication is provisional and cannot confirm whether identical transactions from separate statement exports are truly the same event. Review original statements before making financial decisions.</p><p>GoreeCloud UI alpha token vocabulary · Mesh adapter boundary planned · GoreeShield privacy · Wardveil security · Identity authentication not integrated.</p></footer>
+</main>
+</body></html>
