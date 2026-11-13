@@ -1,6 +1,6 @@
 # GoreeCloud Finances — architecture and trust boundaries
 
-The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.7.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login, password rotation, ciphertext backup/restore, and optional Plaid integration.
+The repository has two separate development paths: the original `app/` is an offline v0.5.0 in-memory CSV viewer; the new `server/` and `web/` together provide a v0.8.0-alpha.0 **loopback-only** encrypted single-owner dashboard with account login, password rotation, ciphertext backup/restore, and optional Plaid integration.
 
 - `server/main.mjs`: loopback startup only, Node.js 22+.
 - `server/app.mjs`: same-origin authenticated API, session and CSRF/Origin/Host checks, login rate limits, request size bounds, local static UI, imported statement handling, account cards and refresh-on-open endpoint.
@@ -30,3 +30,11 @@ See [Local private dashboard](PRIVATE_DASHBOARD.md) and [Security](../SECURITY.m
 - A local backup CLI copies the sealed encrypted vault into a private destination without reading plaintext. Restore refuses to overwrite any existing vault. Backups still require the corresponding password for decryption.
 - Plaid sync restarts from the original cursor on transaction mutation during pagination, never committing partial batches. Up to three attempts are made. Paid on-demand requests have a per-item 30-minute cooldown tracked in process memory and (on successful sync) encrypted state. It is not a production billing cap.
 - Tests cover rotation, backup/restore, permission and symlink refusal, pagination restart and paid cooldown. Formal browser, accessibility, independent security and production provider validation remain incomplete.
+
+
+## v0.8 incremental improvements (synthetic-source validation)
+
+- The CSV importer saves exact new rows returned by the occurrence-aware canonical merge rather than discarding additional equal-value occurrences.
+- Refresh uses three bounded parallel read-only workers, then one encrypted vault commit. Failures retain previous data and show their own check timestamp.
+- Plaid Link update mode uses an existing encrypted access token and requests no new products; the browser never exchanges a new token for an existing Item. Server validations check linked Item ownership and unchanged institution ID/name before a read-only check.
+- Synthetic regression tests cover overlapping imports, connection isolation, update-mode token shape, identity mismatch and bounded parallel error-preserving checks. No live bank connections, production OAuth redirects, or provider coverage verified.

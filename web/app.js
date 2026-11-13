@@ -83,6 +83,10 @@
       connect.type = 'button'; connect.disabled = !details.plaidEnabled || linkBusy; connect.title = details.plaidEnabled ? 'Authorize a read-only connection through Plaid Link' : 'Plaid credentials are not configured on this device';
       connect.addEventListener('click', () => beginLink(provider.name)); actions.append(connect);
       for (const link of provider.links) {
+        const renew = action('button', link.error ? 'Reconnect' : 'Renew access', 'smallbtn');
+        renew.type = 'button'; renew.disabled = !details.plaidEnabled || linkBusy;
+        renew.title = details.plaidEnabled ? 'Use Plaid Link update mode to repair or renew existing consent' : 'Plaid credentials are not configured';
+        renew.addEventListener('click', () => beginLink(provider.name, link.id)); actions.append(renew);
         const remove = action('button', 'Disconnect', 'smallbtn'); remove.type = 'button';
         remove.addEventListener('click', async () => {
           if (!confirm('Disconnect this institution and delete its connected data from the local vault?')) return;
@@ -132,22 +136,47 @@
       document.head.append(script);
     });
   }
-  async function beginLink(institution) {
+  async function beginLink(institution, itemId = null) {
     if (linkBusy) return;
     linkBusy = true; renderProviders();
     try {
-      alertStatus('Opening secure provider authorization for ' + institution + '…');
-      const [token] = await Promise.all([api('link-token', { institution }), loadPlaidScript()]);
+      const isUpdate = Boolean(itemId);
+      alertStatus((isUpdate ? 'Renewing existing authorization' : 'Opening secure provider authorization') + ' for ' + institution + '…');
+      const [token] = await Promise.all([
+        isUpdate ? api('relink-token', { itemId }) : api('link-token', { institution }),
+        loadPlaidScript()
+      ]);
+      let finished = false;
+      const release = link => {
+        if (finished) return;
+        finished = true;
+        link.destroy();
+        linkBusy = false;
+        if (details) renderProviders();
+      };
       const link = window.Plaid.create({ token: token.linkToken,
         onSuccess: async publicToken => {
-          try { await api('connect', { publicToken, institution }); await loadDashboard(); await refresh('open'); alertStatus(institution + ' authorized.'); }
-          catch (error) { alertStatus('Could not connect: ' + error.message, true); }
-          finally { link.destroy(); linkBusy = false; if (details) renderProviders(); }
+          try {
+            if (isUpdate) {
+              // Plaid update mode retains the existing access token. Do not exchange the callback token.
+              const result = await api('relink-complete', { itemId });
+              await loadDashboard();
+              alertStatus(result.success
+                ? institution + ' connection checked after consent renewal. Upstream data may still be cached.'
+                : institution + ' consent flow completed, but the provider check failed. Existing data was retained.', !result.success);
+            } else {
+              await api('connect', { publicToken, institution });
+              await loadDashboard(); await refresh('open');
+              alertStatus(institution + ' authorization saved.');
+            }
+          } catch (error) {
+            alertStatus('Could not ' + (isUpdate ? 'renew' : 'connect') + ': ' + error.message, true);
+          } finally { release(link); }
         },
-        onExit: () => { link.destroy(); linkBusy = false; if (details) renderProviders(); }
+        onExit: () => release(link)
       });
       link.open();
-      // Keep the connect controls disabled until Plaid Link actually completes.
+      // Controls remain disabled until the provider window closes or completes.
     } catch (error) {
       linkBusy = false;
       alertStatus(error.message, true);

@@ -173,8 +173,12 @@ export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePla
         const previous = state.imports.flatMap(x => x.rows.map(row => ({ ...row, cents: BigInt(row.cents) })));
         const merged = finance.mergeStatements(previous, [rows]);
         if (merged.added) {
-          const existingKeys = new Set(previous.map(x => x.key));
-          const added = rows.filter(x => !existingKeys.has(x.key)).map(x => ({ date: x.date, description: x.description, cents: x.cents.toString(), key: x.key }));
+          // mergeStatements knows the occurrence-aware signatures across imports.
+          // Do not filter only by a set of existing signatures: doing so can
+          // acknowledge a third identical row without storing the third occurrence.
+          const added = merged.records.slice(previous.length).map(x => ({
+            date: x.date, description: x.description, cents: x.cents.toString(), key: x.key
+          }));
           state.imports.push({ institution: input.institution, label: (input.label || 'Primary').trim(), rows: added });
           await save(session, state);
         }
@@ -184,6 +188,42 @@ export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePla
         if (!plaid.enabled) return fail(res, 503, 'Provider linking not configured');
         if (!PROVIDERS.includes(input.institution)) return fail(res, 400, 'Unknown institution');
         return json(res, 200, { linkToken: await plaid.createLinkToken() });
+      }
+      if (url.pathname === '/api/relink-token') {
+        if (!plaid.enabled) return fail(res, 503, 'Provider linking not configured');
+        if (typeof input.itemId !== 'string' || !input.itemId || input.itemId.length > 256) {
+          return fail(res, 400, 'Invalid connection');
+        }
+        const item = (await load(session)).items.find(x => x.id === input.itemId);
+        if (!item) return fail(res, 404, 'Connection not found');
+        // Existing Plaid access tokens remain server-side in the encrypted vault.
+        // Update mode takes an access_token and does NOT exchange a new public token.
+        return json(res, 200, { linkToken: await plaid.createUpdateLinkToken(item.accessToken) });
+      }
+      if (url.pathname === '/api/relink-complete') {
+        if (!plaid.enabled) return fail(res, 503, 'Provider linking not configured');
+        if (typeof input.itemId !== 'string' || !input.itemId || input.itemId.length > 256) {
+          return fail(res, 400, 'Invalid connection');
+        }
+        return json(res, 200, await exclusive(async () => {
+          const state = await load(session), index = state.items.findIndex(x => x.id === input.itemId);
+          if (index < 0) throw Object.assign(new Error('Connection not found'), { status: 404 });
+          const old = state.items[index];
+          const verified = await plaid.institution(old.accessToken);
+          if (verified.id !== old.institutionId || !matchesInstitution(old.institution, verified.name)) {
+            throw Object.assign(new Error('Linked institution identity changed; refresh refused'), { status: 409 });
+          }
+          try {
+            state.items[index] = await plaid.sync(old);
+            await save(session, state);
+            return { checked: true, success: true, note: 'Provider data may still be cached.' };
+          } catch {
+            state.items[index] = { ...old, lastChecked: new Date().toISOString(),
+              lastError: 'Reconnect completed; data refresh failed. Retry or review provider authorization.' };
+            await save(session, state);
+            return { checked: true, success: false, note: 'Provider data was not refreshed.' };
+          }
+        }));
       }
       if (url.pathname === '/api/connect') {
         if (!plaid.enabled) return fail(res, 503, 'Provider linking not configured');
@@ -215,11 +255,24 @@ export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePla
         return json(res, 200, await exclusive(async () => {
           const state = await load(session);
           let successes = 0, failures = 0;
-          for (let i = 0; i < state.items.length; i++) {
-            const old = state.items[i];
-            try { state.items[i] = await plaid.sync(old); successes++; }
-            catch { state.items[i] = { ...old, lastChecked: new Date().toISOString(), lastError: 'Refresh failed; previous data retained. Reconnect may be required.' }; failures++; }
-          }
+          // Bound independent provider checks so opening the dashboard is faster
+          // without issuing unbounded concurrent requests. Commit all results
+          // together after the checks finish, never a partially updated vault.
+          let nextIndex = 0;
+          const workers = Math.min(3, state.items.length);
+          await Promise.all(Array.from({ length: workers }, async () => {
+            while (true) {
+              const i = nextIndex++;
+              if (i >= state.items.length) return;
+              const old = state.items[i];
+              try { state.items[i] = await plaid.sync(old); successes++; }
+              catch {
+                state.items[i] = { ...old, lastChecked: new Date().toISOString(),
+                  lastError: 'Refresh failed; previous data retained. Reconnect may be required.' };
+                failures++;
+              }
+            }
+          }));
           await save(session, state);
           return { checked: state.items.length, successes, failures, checkedAt: new Date().toISOString(), note: 'Checks do not guarantee the bank has released new records.' };
         }));

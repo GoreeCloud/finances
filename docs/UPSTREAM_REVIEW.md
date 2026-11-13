@@ -28,3 +28,12 @@ Decision: retain the small, allowlisted native fetch adapter for this developmen
 ## Follow-up acceptance gates
 
 Before real provider onboarding or hosted use, verify bank-by-bank account coverage, consent, actual read-only scopes, costs, reconnect handling, webhook lifecycle, transaction reconciliation, encryption backup recovery, production isolation, dependency advisories, MIPS integration, threat review and independent browser/screen-reader testing. The absence of a scanned upstream package is not proof of safety or production readiness.
+
+## v0.8 targeted Plaid update-mode review
+
+Official Plaid guidance (https://plaid.com/docs/link/update-mode/) describes a token created with an existing Item access token, no products in the update-mode token request, and no repeated public-token exchange after Link success. The source-level adapter follows that request shape, checked with synthetic tests. This is not evidence of production OAuth/redirect registration, live user consent, account eligibility or bank freshness guarantees.
+
+
+## v0.8 targeted open-source license decision
+
+The existing public repository lacked a LICENSE file and was marked UNLICENSED in package metadata. The owner-governed licensing policy requires a repository-specific recognized open-source license. Its tracked source is first-party and dependency-free at runtime; the only known design-token subset is derived from MIT-licensed GoreeCloud UI source. MIT was adopted in the repository root with the 2026 GoreeCloud copyright holder and an explicit attribution NOTICE. This assessment is **specific to current source only**: new third-party libraries, branding assets, provider SDKs or imported sources require independent provenance and licensing review before inclusion. The public repository name and bank labels do not imply trademark authorization.

@@ -1,6 +1,6 @@
 # GoreeCloud Finances — read-only personal financial dashboard
 
-**Maturity:** v0.7.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
+**Maturity:** v0.8.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
 
 ## Private owner dashboard (new)
 
@@ -14,6 +14,13 @@ npm start
 On first launch, **create your own username and password** for the GoreeCloud Finances app. The password encrypts the local vault; it is **not** a bank login. Sign in to see all seven institution cards and any account data you've linked or imported. Every app opening initiates a refresh check of existing connected providers; the UI reports the check time and how recently the upstream source says its data was updated.
 
 **Live banking connections are not enabled by default.** A read-only Plaid Link adapter is available only when you supply your own authorized Plaid credentials and confirm the required product access, provider coverage, terms and costs. One-time institution authorization is attempted **per provider** where supported; not all providers or account types are guaranteed compatible. No banking password is stored by the app. Connections can be revoked from the dashboard. The hosted local mode stores imported CSV and provider tokens **encrypted at rest**.
+
+### v0.8.0 alpha — data accuracy and one-time linking maintenance
+
+- **Occurrence-correct offline imports:** repeated equal-value transactions in overlapping statement exports now persist exactly when a later file contains more occurrences; duplicate reimports remain idempotent. The UI still cannot reconcile exports with provider transaction IDs; overlapping provider/CSV sources may duplicate real-world transactions and require review.
+- **Reconnect existing provider authorization:** each connected provider link now has a Renew access / Reconnect action. It invokes Plaid Link update mode on the existing server-held encrypted Item token, not a new authorization exchange. The server re-verifies institution identity and checks the data without claiming new transactions were published.
+- **Faster read-only checks:** on opening the app and manual refresh, up to three independent linked Items are checked in parallel. Failed checks retain the previous encrypted account data and display an attention state.
+- The current platform remains a loopback-only, single-owner development alpha. Live institution coverage, OAuth redirect acceptance, and cost/production behavior are not established.
 
 ### New: safer recovery and synchronization (v0.7.0 alpha)
 
@@ -63,6 +70,10 @@ date,description,amount
 ```
 
 `amount` is signed: positive entries count as inflow; negative entries count as outflow. Amounts are **not balances**, and net movement is not net worth. No actual bank or provider statement format is assumed. If a bank export differs, normalize it offline before use; do not upload real statements to untrusted converters.
+
+## Open-source licensing and attribution
+
+GoreeCloud Finances source is licensed under **MIT**. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for the project-specific license selection and GoreeCloud UI alpha-token provenance. Financial-provider names identify possible external institutions and are not claims of endorsement, provider compatibility or logo/trademark licensing. No externally hosted Plaid SDK source is bundled.
 
 ## Security and limitations
 

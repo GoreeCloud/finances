@@ -1,4 +1,4 @@
-# Private dashboard — v0.7.0-alpha.0
+# Private dashboard — v0.8.0-alpha.0
 
 ## Creating and using your account
 
@@ -43,11 +43,17 @@ Use an appropriate protected local secret manager or runtime configuration to se
 
 On each of the seven institution cards, select **Connect account**. The official Plaid Link interface manages provider authorization and consent; GoreeCloud Finances itself never receives the bank password. The account authorization must generally be performed **once per supported institution**, although a single institution link may include several accounts. Your app username/password is shared across your entire local dashboard, not used as a bank login. Provider compatibility for Navy Federal Credit Union, Cash App, Varo, Capital One, Marcus by Goldman Sachs, Discover and PayPal has **not been verified for your specific accounts**. Some will require manual imports or later provider-specific adapters. Provider reconnection or re-consent may occasionally be necessary.
 
+### Reconnecting without repeating onboarding
+
+Each connected Item has **Renew access** (or **Reconnect** when the last refresh failed). This opens [Plaid Link update mode](https://plaid.com/docs/link/update-mode/) using an Item-specific link token created with the **existing server-held access token**. The bank may require you to sign in and renew consent within Plaid's provider authorization window. The application does not ask for, store, or exchange an additional public token during the update flow. After the official Link success callback, the server verifies the *same institution ID and matching institution name* and attempts a bounded read-only sync. If that sync fails, the previous encrypted data stays and an error is shown. The app's login password is still separate.
+
+**Limits:** The sandbox mock tests prove local request shape and state handling, not real OAuth eligibility or consent completion. Some OAuth institutions require registered HTTPS redirect URIs that this loopback-only alpha **does not configure**. Not all seven providers or account types can necessarily be linked through Plaid. Do not treat the Reconnect button as proof of institution support.
+
 To stop access, click **Disconnect**, which calls Plaid's `item/remove` and removes the linked data from the encrypted vault. Manual CSV imports remain separate.
 
 ## Refresh on every opening
 
-After unlocking your dashboard, the app immediately reads saved data and **initiates a new check** against each connected provider. Page reloads do the same. The **Check for updates** button can run another check at any time. Every card distinguishes a check timestamp from Plaid's reported upstream update timestamp. If an API check fails, saved data remains with an error indicator; the app does not silently claim it is current.
+After unlocking your dashboard, the app immediately reads saved data and **initiates a new check** against each connected provider (up to three checks concurrently). Page reloads do the same. The **Check for updates** button can run another check at any time. Every card distinguishes a check timestamp from Plaid's reported upstream update timestamp. If an API check fails, saved data remains with an error indicator; the app does not silently claim it is current.
 
 By default, `/accounts/get` returns **cached balances** and `/transactions/sync` reads Plaid's incrementally updated transaction feed. A request at app opening does **not** force banks to publish new information. The separately billed on-demand capabilities can be enabled only if your Plaid plan has the necessary permissions and you accept the possible fees:
 
@@ -61,6 +67,10 @@ GOREE_PLAID_TRANSACTION_REFRESH=true
 ## Offline import fallback
 
 Provide a UTF-8 CSV with the exact normalized header `date,description,amount`. Dates use `YYYY-MM-DD`, dollar amounts have at most two fractional digits, positive = inflow and negative = outflow. Never use actual account numbers for user-defined nicknames. Imports are parsed on the loopback server, converted to integer cents and encrypted at rest. They do not represent verified official balances.
+
+## Statement duplication semantics
+
+The CSV importer preserves all distinct occurrence ordinals within a normalized file, and an overlapping reimport adds only genuinely new occurrence keys. For example, if the first export has two identical dated $5 transactions and a later overlapping export has three, the vault retains three—not two or five. Exact-match idempotence is not a substitute for official bank transaction IDs or deterministic reconciliation of different export formats. Imported entries and live provider entries are presented with their source labels; duplicate real-world spending across those sources can still be counted twice. Never treat this as a reconciled ledger or a complete account balance.
 
 ## Security and deployment limits
 

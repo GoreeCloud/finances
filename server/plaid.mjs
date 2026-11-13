@@ -29,7 +29,9 @@ export function centsFromProvider(value, invert = false) {
 }
 export function cleanAccounts(accounts) {
   if (!Array.isArray(accounts)) throw new Error('Invalid provider accounts');
-  return accounts.slice(0, 60).filter(a => a && typeof a.account_id === 'string').map(a => {
+  if (accounts.length > 60) throw new Error('Provider returned more accounts than this alpha can represent');
+  if (accounts.some(a => !a || typeof a.account_id !== 'string' || !a.account_id)) throw new Error('Invalid provider account identity');
+  return accounts.map(a => {
     const balance = a.balances || {};
     const currency = balance.iso_currency_code === 'USD' ? 'USD' : null;
     return { id: a.account_id, name: String(a.name || 'Account').slice(0, 80),
@@ -55,7 +57,10 @@ export function applySync(oldRows, pages) {
       const tx = cleanTx(entry); if (tx) map.set(tx.id, tx);
     }
   }
-  return [...map.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10000);
+  // Never silently discard transactions while reporting the cursor advanced.
+  // A 10,001st record must fail the sync and retain the previous encrypted state.
+  if (map.size > 10000) throw new Error('Provider transaction limit exceeded; refusing incomplete history');
+  return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
 export function makePlaid(env = process.env, request = fetch) {
@@ -99,6 +104,16 @@ export function makePlaid(env = process.env, request = fetch) {
       user: { client_user_id: 'goreecloud-finances-owner' }, client_name: 'GoreeCloud Finances',
       products: ['transactions'], country_codes: ['US'], language: 'en'
     });
+    return body.link_token;
+  }
+  async function createUpdateLinkToken(accessToken) {
+    if (typeof accessToken !== 'string' || !accessToken) throw new Error('Missing existing provider authorization');
+    const body = await call('/link/token/create', {
+      user: { client_user_id: 'goreecloud-finances-owner' }, client_name: 'GoreeCloud Finances',
+      access_token: accessToken, country_codes: ['US'], language: 'en'
+      // Plaid update mode: do not request new products or payment permissions.
+    });
+    if (typeof body.link_token !== 'string' || !body.link_token) throw new Error('Provider did not return an update token');
     return body.link_token;
   }
   async function exchange(publicToken) {
@@ -173,5 +188,5 @@ export function makePlaid(env = process.env, request = fetch) {
     target.balanceSource = balanceStamp ? 'on-demand' : 'cached';
     return target;
   }
-  return { enabled, environment, paidBalance, paidTxRefresh, createLinkToken, exchange, institution, remove, sync, call };
+  return { enabled, environment, paidBalance, paidTxRefresh, createLinkToken, createUpdateLinkToken, exchange, institution, remove, sync, call };
 }
