@@ -1,6 +1,6 @@
 # GoreeCloud Finances — read-only personal financial dashboard
 
-**Maturity:** v0.9.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
+**Maturity:** v0.10.0-alpha.0 development preview; **not** a production service or financial advice. Source includes a new local owner account and optional authorized Plaid adapter. No real banks have been linked or verified.
 
 ## Private owner dashboard (new)
 
@@ -14,6 +14,14 @@ npm start
 On first launch, **create your own username and password** for the GoreeCloud Finances app. The password encrypts the local vault; it is **not** a bank login. Sign in to see all seven institution cards and any account data you've linked or imported. Every app opening initiates a refresh check of existing connected providers; the UI reports the check time and how recently the upstream source says its data was updated.
 
 **Live banking connections are not enabled by default.** A read-only Plaid Link adapter is available only when you supply your own authorized Plaid credentials and confirm the required product access, provider coverage, terms and costs. One-time institution authorization is attempted **per provider** where supported; not all providers or account types are guaranteed compatible. No banking password is stored by the app. Connections can be revoked from the dashboard. The hosted local mode stores imported CSV and provider tokens **encrypted at rest**.
+
+### v0.10.0 alpha — durable limits before optional paid provider calls
+
+- **Fail-closed by default:** paid on-demand APIs require provider credentials, a product-specific opt-in flag, and **both** explicit owner-selected numeric request-count caps. Product flags alone cannot send paid requests.
+- **Private persistent journal:** a restricted owner-only file and an exclusive cross-process lock reserve optional paid calls BEFORE contacting the provider. Rolling 24-hour global and per-Item request caps and a 30-minute per-Item/operation cooldown survive normal app restarts. No bank tokens or transaction contents are written to this journal.
+- **Fallback:** when the budget is exhausted or its ledger is unsafe, ordinary cached reads continue, with an optional-paid notice visible on the provider card. Failed/uncertain paid attempts consume an allowance.
+- **Not a dollar cap:** requests have different possible provider fees under the owner's Plaid agreement. This application cannot control external clients, remote hosts, changes in configuration, a deleted/restored ledger, or a compromised device.
+- No third-party code was added, real accounts linked, or production deployment performed.
 
 ### v0.9.0 alpha — private complete stored-history browsing
 

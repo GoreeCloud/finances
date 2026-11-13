@@ -29,3 +29,8 @@ node_modules/
 # Never stage an encrypted backup even if backup paths are customized.
 *.encrypted.json
 backups/
+
+
+# Private optional-paid request metadata, including temp and lock files.
+paid-requests.json*
+paid-ledger.json*

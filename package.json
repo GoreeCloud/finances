@@ -1,6 +1,6 @@
 {
   "name": "@goreecloud/finances",
-  "version": "0.9.0-alpha.0",
+  "version": "0.10.0-alpha.0",
   "description": "GoreeCloud Finances — private, read-only, local-first financial dashboard",
   "private": true,
   "engines": { "node": ">=22" },

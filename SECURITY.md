@@ -23,3 +23,8 @@ See [Private dashboard](docs/PRIVATE_DASHBOARD.md) and [Architecture](docs/ARCHI
 ### v0.9 authenticated history access
 
 The account overview now minimizes transaction metadata: it returns aggregate counts, while all stored transaction details are requested as bounded 1–100-row pages through the POST-only /api/transactions route under the existing owner session and CSRF header. Text, institution/source and date filters are validated, and URL query strings are refused. Search terms are not persisted separately or placed in browser storage. No external analytics or financial-data transmission was introduced. Synthetic integration and static HTML accessibility checks passed, **not** a complete browser or security assessment. Search counts reflect locally saved transactions only and should not be represented as bank data completeness.
+
+
+### v0.10 optional paid request safety
+
+The optional balance and Transactions Refresh APIs require an independent enabled product flag AND both explicit request-count caps. A private persistent owner-only ledger reserves before network use, and generic adapter calls cannot bypass it. Corrupt/locked ledger data and unknown request outcomes never silently retry paid calls; normal cached checks continue. This is not a tamper-proof ledger, a provider-wide billing cap, an encrypted record of amounts, or a production security certification. Its private pseudonymous metadata must be protected and retained across restarts. The journal is not included in ciphertext-only vault backups.

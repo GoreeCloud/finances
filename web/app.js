@@ -59,7 +59,13 @@
     $('credit-total').textContent = hasCredit ? cents(credit.toString()) : '—';
     $('connected-count').textContent = details.providers.filter(p => p.connected).length + ' of 7';
     $('transaction-count').textContent = integer.format(details.totalTransactions);
-    $('provider-mode').textContent = details.plaidEnabled ? (details.paidBalance ? 'On-demand balance enabled' : 'Cached balance mode') : 'Live linking not configured · local imports available';
+    $('provider-mode').textContent = !details.plaidEnabled
+      ? 'Live linking not configured · local imports available'
+      : details.paidRequested && !details.paidLimitsReady
+        ? 'Paid requests BLOCKED: configure owner-approved daily request caps first · cached checks still work'
+        : details.paidBalance || details.paidTxRefresh
+          ? 'Optional paid requests enabled with local durable request-count limits · actual charges unverified'
+          : 'Cached balance mode · optional paid requests disabled';
   }
   function renderProviders() {
     const target = $('institutions'); target.replaceChildren();
@@ -81,6 +87,7 @@
       for (const link of provider.links) {
         if (link.checkedAt) content.append(action('p', 'Checked: ' + dateLabel(link.checkedAt) + ' · Provider data: ' + dateLabel(link.providerUpdatedAt)));
         if (link.error) content.append(action('p', link.error));
+        if (link.paidNotice) content.append(action('p', link.paidNotice));
       }
       card.append(content);
       const actions = action('div', '', 'provider-actions');

@@ -1,4 +1,4 @@
-# Private dashboard — v0.9.0-alpha.0
+# Private dashboard — v0.10.0-alpha.0
 
 ## Creating and using your account
 
@@ -55,14 +55,28 @@ To stop access, click **Disconnect**, which calls Plaid's `item/remove` and remo
 
 After unlocking your dashboard, the app immediately reads saved data and **initiates a new check** against each connected provider (up to three checks concurrently). Page reloads do the same. The **Check for updates** button can run another check at any time. Every card distinguishes a check timestamp from Plaid's reported upstream update timestamp. If an API check fails, saved data remains with an error indicator; the app does not silently claim it is current.
 
-By default, `/accounts/get` returns **cached balances** and `/transactions/sync` reads Plaid's incrementally updated transaction feed. A request at app opening does **not** force banks to publish new information. The separately billed on-demand capabilities can be enabled only if your Plaid plan has the necessary permissions and you accept the possible fees:
+By default the Plaid account/transaction read endpoints serve cached data. Checking on app opening does NOT force the financial institution to publish new records.
 
-```bash
+### Optional separately billed on-demand calls
+
+To permit optional fee-bearing requests, after independently reviewing your approved Plaid product access, actual fees, your agreement and consent, configure both request-count limits as well as the specific paid product flags. This is an illustration of settings, NOT a request to enable real billing:
+
+~~~bash
 GOREE_PLAID_REALTIME_BALANCE=true
 GOREE_PLAID_TRANSACTION_REFRESH=true
-```
+GOREE_PLAID_PAID_DAILY_CAP=4
+GOREE_PLAID_PAID_PER_ITEM_DAILY_CAP=2
+~~~
 
-**Warning:** Both flags may incur charges. The adapter now limits optional paid balance and transaction requests to one per linked item and operation per **30 minutes**, tracking completed requests in the encrypted vault and attempts in process memory. **This is not a guaranteed provider billing cap:** interrupted work or process restarts may allow additional requests. On-demand transaction results may arrive asynchronously. Routine read-only checks still run on each opening. Production operation needs durable limits, approved webhooks and separate security and billing reviews. These flags remain disabled by default.
+Both caps must be positive integers 1–100; the per-Item daily cap must not exceed the global daily cap. The caps apply to all optional paid operations COMBINED in a rolling 24-hour window. A 30-minute per-Item/operation cooldown also applies. Missing, malformed or insufficient caps always disable paid operations; ordinary cached checks continue.
+
+A private on-disk request journal defaults to ~/.local/share/goreecloud-finances/paid-requests.json. You may configure GOREE_PLAID_PAID_LEDGER_FILE to a trusted private absolute path OUTSIDE source control. The journal has restrictive owner-only permissions (0600 file, 0700 directory) and stores only pseudonymized keyed Item digests, operation types and timestamps, NEVER raw bank tokens, transaction descriptions or balances. It is NOT part of the encrypted financial vault and is not encrypted itself. An atomic, fsynced record is written before each optional paid request, under a cross-process exclusive lock. Failed or uncertain provider calls still count to avoid automatic repeat charges.
+
+The program fails closed when the ledger is malformed, has broad permissions, is a symlink, is locked by another process, or the system clock moves backward. A crash may leave a stale lock file; before any manual recovery, stop all application processes and verify no legitimate writer is still using the journal. The application does not automatically remove suspected stale locks, reset the budget or call paid endpoints on a fallback. Provider cards display notices about skipped/failed optional calls. The cached provider checks remain operational.
+
+**Important limits:** This is a local *request-count* restriction, NOT a dollar-cost ceiling, legally enforceable budget, or total Plaid billing guarantee. Deleting/replacing/migrating the journal loses its history. Requests by another client or on another host are not accounted for. The owner's actual pricing depends on their Plaid agreement; Transactions Refresh may update asynchronously, so a check is not a freshness guarantee. Obtain explicit owner authorization and real provider coverage, webhook, security, billing and recovery acceptance before production use.
+
+Plaid references: https://plaid.com/docs/account/billing/ and https://plaid.com/docs/transactions/webhooks/
 
 ## Offline import fallback
 

@@ -88,7 +88,8 @@ function jsonDashboard(state, options) {
     const imports = state.imports.filter(x => x.institution === name);
     return { name, connected: items.length > 0, accounts: items.flatMap(x => (x.accounts || []).map(a => ({ ...a, itemId: x.id, institution: name, checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null, balanceSource: x.balanceSource || 'cached' }))),
       links: items.map(x => ({ id: x.id, status: x.lastError ? 'error' : (x.lastChecked ? 'checked' : 'pending'), error: x.lastError || null,
-        checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null, balanceSource: x.balanceSource || 'cached' })),
+        checkedAt: x.lastChecked || null, providerUpdatedAt: x.lastProviderUpdate || null,
+        balanceSource: x.balanceSource || 'cached', paidNotice: x.paidNotice || null })),
       importedRows: imports.reduce((sum, x) => sum + x.rows.length, 0) };
   });
   // Data minimization: the overview carries counts and account summaries, not
@@ -98,6 +99,7 @@ function jsonDashboard(state, options) {
   return { providers: institutions, totalTransactions,
     linkedItems: state.items.length, importBatches: state.imports.length, plaidEnabled: options.plaid.enabled,
     paidBalance: options.plaid.paidBalance, paidTxRefresh: options.plaid.paidTxRefresh,
+    paidRequested: Boolean(options.plaid.paidRequested), paidLimitsReady: Boolean(options.plaid.paidLimitsReady),
     info: 'Cached balances and transaction updates depend on the institution/provider; a new sync check is not a guarantee of new bank data.' };
 }
 export function createFinanceServer({ dataFile = baseDataFile(), plaid = makePlaid(), port = 8787 } = {}) {

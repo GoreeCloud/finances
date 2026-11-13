@@ -23,4 +23,5 @@ jobs:
           node --check server/app.mjs
           node --check server/vault.mjs
           node --check server/plaid.mjs
+          node --check server/paid-guard.mjs
           node --check cli/vault-backup.mjs
